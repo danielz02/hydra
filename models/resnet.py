@@ -1,10 +1,11 @@
 import torch
 import torch.nn as nn
 
+
 def conv3x3(in_planes, out_planes, conv_layer, stride=1, groups=1, dilation=1):
     """3x3 convolution with padding"""
     return conv_layer(in_planes, out_planes, kernel_size=3, stride=stride,
-                     padding=dilation, groups=groups, bias=False, dilation=dilation)
+                      padding=dilation, groups=groups, bias=False, dilation=dilation)
 
 
 def conv1x1(in_planes, out_planes, conv_layer, stride=1):
@@ -97,7 +98,6 @@ class Bottleneck(nn.Module):
 
 
 class ResNet(nn.Module):
-
     def __init__(self, conv_layer, linear_layer, block, layers, num_classes=1000, zero_init_residual=False,
                  groups=1, width_per_group=64, replace_stride_with_dilation=None,
                  norm_layer=None):
@@ -119,8 +119,7 @@ class ResNet(nn.Module):
         self.groups = groups
         self.base_width = width_per_group
 
-        self.conv1 = conv_layer(3, self.inplanes, kernel_size=7, stride=2, padding=3,
-                               bias=False)
+        self.conv1 = conv_layer(3, self.inplanes, kernel_size=7, stride=2, padding=3, bias=False)
         self.bn1 = norm_layer(self.inplanes)
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
@@ -164,9 +163,8 @@ class ResNet(nn.Module):
                 norm_layer(planes * block.expansion),
             )
 
-        layers = []
-        layers.append(block(self.inplanes, planes, self.conv_layer, stride, downsample, self.groups,
-                            self.base_width, previous_dilation, norm_layer))
+        layers = [block(self.inplanes, planes, self.conv_layer, stride, downsample, self.groups,
+                        self.base_width, previous_dilation, norm_layer)]
         self.inplanes = planes * block.expansion
         for _ in range(1, blocks):
             layers.append(block(self.inplanes, planes, self.conv_layer, groups=self.groups,
@@ -199,12 +197,12 @@ class ResNet(nn.Module):
 
 # NOTE: Only supporting default (kaiming_init) initializaition.
 def ResNet18(conv_layer, linear_layer, init_type, **kwargs):
-    assert init_type == "kaiming_normal", "only supporting default init for Resnets"
+    assert init_type == "kaiming_normal", "only supporting default init for ResNets"
     return ResNet(conv_layer, linear_layer, BasicBlock, [2, 2, 2, 2], **kwargs)
 
 
 def ResNet34(conv_layer, linear_layer, init_type, **kwargs):
-    assert init_type == "kaiming_normal", "only supporting default init for Resnets"
+    assert init_type == "kaiming_normal", "only supporting default init for ResNets"
     return ResNet(conv_layer, linear_layer, BasicBlock, [3, 4, 6, 3], **kwargs)
 
 

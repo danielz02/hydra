@@ -112,29 +112,29 @@ class ResNet(nn.Module):
         return out
 
 
-# NOTE: Only supporting default (kaiming_init) initializaition.
+# NOTE: Only supporting default (kaiming_init) initialization.
 def resnet18(conv_layer, linear_layer, init_type, **kwargs):
-    assert init_type == "kaiming_normal", "only supporting default init for Resnets"
+    assert init_type == "kaiming_normal", "only supporting default init for ResNets"
     return ResNet(conv_layer, linear_layer, BasicBlock, [2, 2, 2, 2], **kwargs)
 
 
 def resnet34(conv_layer, linear_layer, init_type, **kwargs):
-    assert init_type == "kaiming_normal", "only supporting default init for Resnets"
+    assert init_type == "kaiming_normal", "only supporting default init for ResNets"
     return ResNet(conv_layer, linear_layer, BasicBlock, [3, 4, 6, 3], **kwargs)
 
 
 def resnet50(conv_layer, linear_layer, init_type, **kwargs):
-    assert init_type == "kaiming_normal", "only supporting default init for Resnets"
+    assert init_type == "kaiming_normal", "only supporting default init for ResNets"
     return ResNet(conv_layer, linear_layer, Bottleneck, [3, 4, 6, 3], **kwargs)
 
 
 def resnet101(conv_layer, linear_layer, init_type, **kwargs):
-    assert init_type == "kaiming_normal", "only supporting default init for Resnets"
+    assert init_type == "kaiming_normal", "only supporting default init for ResNets"
     return ResNet(conv_layer, linear_layer, Bottleneck, [3, 4, 23, 3], **kwargs)
 
 
 def resnet152(conv_layer, linear_layer, init_type, **kwargs):
-    assert init_type == "kaiming_normal", "only supporting default init for Resnets"
+    assert init_type == "kaiming_normal", "only supporting default init for ResNets"
     return ResNet(conv_layer, linear_layer, Bottleneck, [3, 8, 36, 3], **kwargs)
 
 

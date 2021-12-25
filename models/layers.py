@@ -5,6 +5,7 @@ from torch.nn.parameter import Parameter
 import torch.nn.functional as F
 import math
 
+
 # https://github.com/allenai/hidden-networks
 class GetSubnet(autograd.Function):
     @staticmethod
@@ -102,4 +103,3 @@ class SubnetLinear(nn.Linear):
         x = F.linear(x, self.w, self.bias)
 
         return x
-
