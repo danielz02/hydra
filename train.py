@@ -21,6 +21,7 @@ from torch.utils.tensorboard import SummaryWriter
 import models
 import data
 from args import parse_args
+from models.ensemble import Ensemble
 from utils.schedules import get_lr_policy, get_optimizer
 from utils.logging import (
     save_checkpoint,
@@ -105,23 +106,27 @@ def main():
     device = torch.device(f"cuda:{gpu_list[0]}" if use_cuda else "cpu")
 
     # Create model
+    ensemble_models = []
     cl, ll = get_layers(args.layer_type)
-    if len(gpu_list) > 1:
-        print("Using multiple GPUs")
-        model = nn.DataParallel(
-            models.__dict__[args.arch](
+    for _ in range(args.num_models):
+        if len(gpu_list) > 1:
+            print("Using multiple GPUs")
+            model = nn.parallel.DataParallel(
+                models.__dict__[args.arch](
+                    cl, ll, args.init_type, num_classes=args.num_classes
+                ),
+                gpu_list,
+            ).to(device)
+        else:
+            model = models.__dict__[args.arch](
                 cl, ll, args.init_type, num_classes=args.num_classes
-            ),
-            gpu_list,
-        ).to(device)
-    else:
-        model = models.__dict__[args.arch](
-            cl, ll, args.init_type, num_classes=args.num_classes
-        ).to(device)
-    logger.info(model)
+            ).to(device)
+        logger.info(model)
 
-    # Customize models for training/pruning/fine-tuning
-    prepare_model(model, args)
+        # Customize models for training/pruning/fine-tuning
+        prepare_model(model, args)
+        ensemble_models.append(model)
+    ensemble_model = Ensemble(ensemble_models)
 
     # Setup tensorboard writer
     writer = SummaryWriter(os.path.join(result_sub_dir, "tensorboard"))
@@ -141,7 +146,7 @@ def main():
 
     # autograd
     criterion = nn.CrossEntropyLoss()
-    optimizer = get_optimizer(model, args)
+    optimizer = get_optimizer(ensemble_model, args)
     lr_policy = get_lr_policy(args.lr_schedule)(optimizer, args)
     logger.info([criterion, optimizer, lr_policy])
 
@@ -154,7 +159,7 @@ def main():
         if os.path.isfile(args.source_net):
             logger.info("=> loading source model from '{}'".format(args.source_net))
             checkpoint = torch.load(args.source_net, map_location=device)
-            model.load_state_dict(checkpoint["state_dict"])
+            ensemble_model.load_state_dict(checkpoint["state_dict"])
             logger.info("=> loaded checkpoint '{}'".format(args.source_net))
         else:
             logger.info("=> no checkpoint found at '{}'".format(args.resume))
@@ -162,36 +167,40 @@ def main():
     # Init scores once source net is loaded.
     # NOTE: scaled_init_scores will overwrite the scores in the pre-trained net.
     if args.scaled_score_init:
-        initialize_scaled_score(model)
+        for m in ensemble_model.models:
+            initialize_scaled_score(m)
 
     # Scaled random initialization. Useful when training a high sparse net from scratch.
     # If not used, a sparse net (without batch-norm) from scratch will not coverge.
     # With batch-norm its not really necessary.
     if args.scale_rand_init:
-        scale_rand_init(model, args.k)
+        for m in ensemble_model.models:
+            scale_rand_init(m, args.k)
 
     # Scaled random initialization. Useful when training a high sparse net from scratch.
     # If not used, a sparse net (without batch-norm) from scratch will not coverge.
     # With batch-norm its not really necessary.
     if args.scale_rand_init:
-        scale_rand_init(model, args.k)
+        for m in ensemble_model.models:
+            scale_rand_init(m, args.k)
 
     if args.snip_init:
-        snip_init(model, criterion, optimizer, train_loader, device, args)
+        for m in ensemble_model.models:
+            snip_init(m, criterion, optimizer, train_loader, device, args)
 
     assert not (args.source_net and args.resume), (
         "Incorrect setup: "
         "resume => required to resume a previous experiment (loads all parameters)|| "
         "source_net => required to start pruning/fine-tuning from a source model (only load state_dict)"
     )
-    # resume (if checkpoint provided). Continue training with preiovus settings.
+    # resume (if checkpoint provided). Continue training with previous settings.
     if args.resume:
         if os.path.isfile(args.resume):
             logger.info("=> loading checkpoint '{}'".format(args.resume))
             checkpoint = torch.load(args.resume, map_location=device)
             args.start_epoch = checkpoint["epoch"]
             best_prec1 = checkpoint["best_prec1"]
-            model.load_state_dict(checkpoint["state_dict"])
+            ensemble_model.load_state_dict(checkpoint["state_dict"])
             optimizer.load_state_dict(checkpoint["optimizer"])
             logger.info(
                 "=> loaded checkpoint '{}' (epoch {})".format(
@@ -203,19 +212,19 @@ def main():
 
     # Evaluate
     if args.evaluate or args.exp_mode in ["prune", "finetune"]:
-        p1, _ = val(model, device, test_loader, criterion, args, writer)
+        p1, _ = val(ensemble_model, device, test_loader, criterion, args, writer)
         logger.info(f"Validation accuracy {args.val_method} for source-net: {p1}")
         if args.evaluate:
             return
 
     best_prec1 = 0
 
-    show_gradients(model)
+    show_gradients(ensemble_model)
 
     if args.source_net:
         last_ckpt = checkpoint["state_dict"]
     else:
-        last_ckpt = copy.deepcopy(model.state_dict())
+        last_ckpt = copy.deepcopy(ensemble_model.state_dict())
 
     # Start training
     for epoch in range(args.start_epoch, args.epochs + args.warmup_epochs):
@@ -223,7 +232,7 @@ def main():
 
         # train
         trainer(
-            model,
+            ensemble_model,
             device,
             train_loader,
             sm_loader,
@@ -237,13 +246,13 @@ def main():
         # evaluate on test set
         if args.val_method == "smooth":
             prec1, radii = val(
-                model, device, test_loader, criterion, args, writer, epoch
+                ensemble_model, device, test_loader, criterion, args, writer, epoch
             )
             logger.info(f"Epoch {epoch}, mean provable Radii  {radii}")
         if args.val_method == "mixtrain" and epoch <= args.schedule_length:
             prec1 = 0.0
         else:
-            prec1, _ = val(model, device, test_loader, criterion, args, writer, epoch)
+            prec1, _ = val(ensemble_model, device, test_loader, criterion, args, writer, epoch)
 
         # remember best prec@1 and save checkpoint
         is_best = prec1 > best_prec1
@@ -252,7 +261,7 @@ def main():
             {
                 "epoch": epoch + 1,
                 "arch": args.arch,
-                "state_dict": model.state_dict(),
+                "state_dict": ensemble_model.state_dict(),
                 "best_prec1": best_prec1,
                 "optimizer": optimizer.state_dict(),
             },
@@ -269,7 +278,7 @@ def main():
             logger.info(
                 "Pruned model: {:.2f}%".format(
                     current_model_pruned_fraction(
-                        model, os.path.join(result_sub_dir, "checkpoint"), verbose=False
+                        ensemble_model, os.path.join(result_sub_dir, "checkpoint"), verbose=False
                     )
                 )
             )
@@ -280,13 +289,13 @@ def main():
         )
 
         # Check what parameters got updated in the current epoch.
-        sw, ss = sanity_check_paramter_updates(model, last_ckpt)
+        sw, ss = sanity_check_paramter_updates(ensemble_model, last_ckpt)
         logger.info(
             f"Sanity check (exp-mode: {args.exp_mode}): Weight update - {sw}, Scores update - {ss}"
         )
 
     current_model_pruned_fraction(
-        model, os.path.join(result_sub_dir, "checkpoint"), verbose=True
+        ensemble_models, os.path.join(result_sub_dir, "checkpoint"), verbose=True
     )
 
 

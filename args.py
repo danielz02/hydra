@@ -118,12 +118,12 @@ def parse_args():
         help="Std of normal distribution used to generate noise",
     )
 
-    #parser.add_argument(
-    #    "--scale_rand_init",
-    #    action="store_true",
-    #    default=False,
-    #    help="Init weight with scaling using pruning ratio",
-    #)
+    # parser.add_argument(
+    #     "--scale_rand_init",
+    #     action="store_true",
+    #     default=False,
+    #     help="Init weight with scaling using pruning ratio",
+    # )
 
     parser.add_argument(
         "--scores_init_type",
@@ -183,7 +183,7 @@ def parse_args():
         "--trainer",
         type=str,
         default="base",
-        choices=("base", "adv", "mixtrain", "crown-ibp", "smooth", "freeadv"),
+        choices=("base", "adv", "mixtrain", "crown-ibp", "smooth", "freeadv", "trs"),
         help="Natural (base) or adversarial or verifiable training",
     )
     parser.add_argument(
@@ -308,5 +308,19 @@ def parse_args():
         default=1,
         help="Number of samples out of a batch to train with sym in mixtrain.",
     )
+
+    parser.add_argument(
+        "--num-models",
+        type=int,
+        default=3,
+        help="Number of base models in the ensemble"
+    )
+
+    parser.add_argument('--coeff', default=2.0, type=float, required=True)
+    parser.add_argument('--lamda', default=2.0, type=float, required=True)
+    parser.add_argument('--scale', default=5.0, type=float, required=True)
+    parser.add_argument('--plus-adv', action='store_true')
+    parser.add_argument('--adv-eps', default=0.2, type=float)
+    parser.add_argument('--init-eps', default=0.1, type=float)
 
     return parser.parse_args()
