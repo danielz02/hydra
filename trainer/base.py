@@ -4,13 +4,16 @@ import torch
 import torch.nn as nn
 import torchvision
 
+from models.ensemble import Ensemble
 from utils.logging import AverageMeter, ProgressMeter
 from utils.eval import accuracy
 
+
 # TODO: support sm_loader when len(sm_loader.dataset) < len(train_loader.dataset)
-def train(
-    model, device, train_loader, sm_loader, criterion, optimizer, epoch, args, writer
-):
+from utils.utils_ensemble import requires_grad_
+
+
+def train(model, device, train_loader, sm_loader, criterion, optimizer, epoch, args, writer):
     print(" ->->->->->->->->->-> One epoch with Natural training <-<-<-<-<-<-<-<-<-<-")
 
     batch_time = AverageMeter("Time", ":6.3f")
@@ -25,6 +28,10 @@ def train(
     )
 
     model.train()
+    if isinstance(model, Ensemble):
+        for i, m in enumerate(model.models):
+            model.models[i].train()
+            requires_grad_(model.models[i], True)
     end = time.time()
 
     dataloader = train_loader if sm_loader is None else zip(train_loader, sm_loader)
@@ -53,8 +60,15 @@ def train(
                 )
             )
 
-        output = model(images)
-        loss = criterion(output, target)
+        if isinstance(model, Ensemble):
+            loss = 0
+            for m in model.models:
+                output = m(images)
+                loss += criterion(output, target)
+            output = model(images)
+        else:
+            output = model(images)
+            loss = criterion(output, target)
 
         # measure accuracy and record loss
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
@@ -80,6 +94,5 @@ def train(
         if i == 0:
             writer.add_image(
                 "training-images",
-                torchvision.utils.make_grid(images[0 : len(images) // 4]),
+                torchvision.utils.make_grid(images[0: len(images) // 4]),
             )
-

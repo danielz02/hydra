@@ -8,13 +8,10 @@ from utils.logging import AverageMeter, ProgressMeter
 from utils.eval import accuracy
 from utils.adv import trades_loss
 
+
 # TODO: add adversarial accuracy.
-def train(
-    model, device, train_loader, sm_loader, criterion, optimizer, epoch, args, writer
-):
-    print(
-        " ->->->->->->->->->-> One epoch with Adversarial training (TRADES) <-<-<-<-<-<-<-<-<-<-"
-    )
+def train(model, device, train_loader, sm_loader, criterion, optimizer, epoch, args, writer):
+    print(" ->->->->->->->->->-> One epoch with Adversarial training (TRADES) <-<-<-<-<-<-<-<-<-<-")
 
     batch_time = AverageMeter("Time", ":6.3f")
     data_time = AverageMeter("Data", ":6.3f")
@@ -93,5 +90,5 @@ def train(
         if i == 0:
             writer.add_image(
                 "training-images",
-                torchvision.utils.make_grid(images[0 : len(images) // 4]),
+                torchvision.utils.make_grid(images[0: len(images) // 4]),
             )
