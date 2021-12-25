@@ -1,3 +1,4 @@
+import sys
 import torch
 import torch.nn as nn
 
@@ -5,7 +6,7 @@ import numpy as np
 
 
 def get_lr_policy(lr_schedule):
-    """Implement a new schduler directly in this file. 
+    """Implement a new scheduler directly in this file.
     Args should contain a single choice for learning rate scheduler."""
 
     d = {
@@ -17,18 +18,23 @@ def get_lr_policy(lr_schedule):
 
 
 def get_optimizer(model, args):
+    param = list(model.models[0].parameters())
+    for i in range(1, args.num_models):
+        param.extend(list(model.models[i].parameters()))
+    param = filter(lambda x: x.requires_grad, param)
+
     if args.optimizer == "sgd":
         optim = torch.optim.SGD(
-            model.parameters(),
+            param,
             lr=args.lr,
             momentum=args.momentum,
             weight_decay=args.wd,
         )
     elif args.optimizer == "adam":
-        optim = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.wd,)
+        optim = torch.optim.Adam(param, lr=args.lr, weight_decay=args.wd,)
     elif args.optimizer == "rmsprop":
         optim = torch.optim.RMSprop(
-            model.parameters(),
+            param,
             lr=args.lr,
             momentum=args.momentum,
             weight_decay=args.wd,

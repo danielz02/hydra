@@ -36,9 +36,7 @@ def trades_loss(
     model.eval()
     batch_size = len(x_natural)
     # generate adversarial example
-    x_adv = (
-        x_natural.detach() + 0.001 * torch.randn(x_natural.shape).to(device).detach()
-    )
+    x_adv = (x_natural.detach() + 0.001 * torch.randn(x_natural.shape).to(device).detach())
     if distance == "l_inf":
         for _ in range(perturb_steps):
             x_adv.requires_grad_()
