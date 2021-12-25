@@ -23,7 +23,7 @@ import matplotlib.pyplot as plt
 from advertorch.attacks import LinfPGDAttack
 from advertorch.attacks.utils import attack_whole_dataset
 from models.ensemble import Ensemble
-from logging import AverageMeter
+from utils.logging import AverageMeter
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -125,6 +125,9 @@ def gen_plot(transmat):
 
 
 def evaltrans(args, loader, models, criterion, epoch, device, writer=None):
+    if isinstance(models, Ensemble):
+        models = models.models
+
     for i in range(len(models)):
         models[i].eval()
 
