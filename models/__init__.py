@@ -15,7 +15,7 @@ from models.vgg_cifar import (
     vgg16,
     vgg16_bn,
 )
-from models.resnet_cifar import resnet18, resnet34, resnet50, resnet101, resnet152
+from models.resnet_cifar import resnet18, resnet20, resnet34, resnet50, resnet101, resnet152
 from models.wrn_cifar import wrn_28_10, wrn_28_1, wrn_28_4, wrn_34_10, wrn_40_2
 from models.basic import (
     lin_1,
@@ -48,6 +48,7 @@ __all__ = [
     "vgg16",
     "vgg16_bn",
     "resnet18",
+    "resnet20",
     "resnet34",
     "resnet50",
     "resnet101",
