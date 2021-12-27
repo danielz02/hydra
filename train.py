@@ -113,13 +113,14 @@ def main():
             print("Using multiple GPUs")
             model = nn.parallel.DataParallel(
                 models.__dict__[args.arch](
-                    cl, ll, args.init_type, num_classes=args.num_classes
+                    cl, ll, args.init_type, num_classes=args.num_classes,
+                    in_channels=(1 if args.dataset == "MNIST" else 3)
                 ),
                 gpu_list,
             ).to(device)
         else:
             model = models.__dict__[args.arch](
-                cl, ll, args.init_type, num_classes=args.num_classes
+                cl, ll, args.init_type, num_classes=args.num_classes, in_channels=(1 if args.dataset == "MNIST" else 3)
             ).to(device)
         logger.info(model)
 
