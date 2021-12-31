@@ -83,6 +83,7 @@ class ResNet(nn.Module):
         super(ResNet, self).__init__()
         self.in_planes = 16
         self.conv_layer = conv_layer
+        self.in_channels = in_channels
 
         self.conv1 = conv_layer(in_channels, 16, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(16)
@@ -106,7 +107,7 @@ class ResNet(nn.Module):
         out = self.layer2(out)
         out = self.layer3(out)
         # out = self.layer4(out)
-        out = F.avg_pool2d(out, 8)
+        out = F.avg_pool2d(out, 8 if self.in_channels == 3 else 7)  # Special treatment for MNIST datat
         out = out.view(out.size(0), -1)
         out = self.linear(out)
         return out
