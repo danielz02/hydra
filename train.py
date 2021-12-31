@@ -296,7 +296,7 @@ def main():
         )
 
     current_model_pruned_fraction(
-        ensemble_models, os.path.join(result_sub_dir, "checkpoint"), verbose=True
+        ensemble_model, os.path.join(result_sub_dir, "checkpoint"), verbose=True
     )
 
 
