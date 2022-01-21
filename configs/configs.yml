@@ -14,7 +14,7 @@ k: 1.0
 # ->->->->-> Train <-<-<-<-<-
 trainer: "base"
 epochs: 100
-optimizer: "adam"
+optimizer: "sgd"
 lr: 0.1
 lr_schedule: "cosine"
 wd: 0.0001
