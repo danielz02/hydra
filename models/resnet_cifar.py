@@ -139,6 +139,11 @@ def resnet101(conv_layer, linear_layer, init_type, **kwargs):
     return ResNet(conv_layer, linear_layer, Bottleneck, [3, 4, 23, 3], **kwargs)
 
 
+def resnet110(conv_layer, linear_layer, init_type, **kwargs):
+    assert init_type == "kaiming_normal", "only supporting default init for ResNets"
+    return ResNet(conv_layer, linear_layer, BasicBlock, [18, 18, 18, 18], **kwargs)
+
+
 def resnet152(conv_layer, linear_layer, init_type, **kwargs):
     assert init_type == "kaiming_normal", "only supporting default init for ResNets"
     return ResNet(conv_layer, linear_layer, Bottleneck, [3, 8, 36, 3], **kwargs)
