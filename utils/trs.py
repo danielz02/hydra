@@ -66,7 +66,6 @@ def TRS_Trainer(args, loader: DataLoader, sm_loader: bool, models: Ensemble, cri
 
     for i in range(args.num_models):
         models.models[i].train()
-        requires_grad_(models.models[i], True)
 
     for i, data in enumerate(loader):
         # measure data loading time
