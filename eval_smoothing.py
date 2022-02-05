@@ -13,9 +13,10 @@ import torch.nn as nn
 
 import models
 import data
+from models.ensemble import Ensemble
 
 from utils.smoothing import Smooth, quick_smoothing, eval_quick_smoothing
-from utils.model import get_layers
+from utils.model import get_layers, prepare_model
 
 parser = argparse.ArgumentParser(description="Certify many examples")
 parser.add_argument(
@@ -86,6 +87,23 @@ parser.add_argument(
     default=100,
     help="Number of batches to wait before printing training logs",
 )
+parser.add_argument("--num-models", type=int, default=3)
+parser.add_argument("--exp-mode", type=str, default="pretrain")
+parser.add_argument(
+    "--freeze-bn",
+    action="store_true",
+    default=False,
+    help="freeze batch-norm parameters in pruning",
+)
+parser.add_argument(
+    "--scores_init_type",
+    choices=("kaiming_normal", "kaiming_uniform", "xavier_uniform", "xavier_normal"),
+    help="Which init to use for relevance scores",
+    default="kaiming_normal"
+)
+
+parser.add_argument("--k", type=float)
+
 args = parser.parse_args()
 
 if __name__ == "__main__":
@@ -100,19 +118,31 @@ if __name__ == "__main__":
     device = torch.device(f"cuda:{gpu_list[0]}")
 
     # Create model
+    ensemble_models = []
     cl, ll = get_layers(args.layer_type)
-    if len(gpu_list) > 1:
-        print("Using multiple GPUs")
-        base_classifier = nn.DataParallel(
-            models.__dict__[args.arch](
-                cl, ll, "kaiming_normal", num_classes=args.num_classes
-            ),
-            gpu_list,
-        ).to(device)
-    else:
-        base_classifier = models.__dict__[args.arch](
-            cl, ll, "kaiming_normal", num_classes=args.num_classes
-        ).to(device)
+    for _ in range(args.num_models):
+        if len(gpu_list) > 1:
+            print("Using multiple GPUs")
+            model = nn.parallel.DataParallel(
+                models.__dict__[args.arch](
+                    cl, ll, "kaiming_normal", num_classes=args.num_classes,
+                    # in_channels=(1 if args.dataset == "MNIST" else 3)
+                ),
+                gpu_list,
+            ).to(device)
+        else:
+            model = nn.parallel.DataParallel(
+                models.__dict__[args.arch](
+                    cl, ll, "kaiming_normal", num_classes=args.num_classes,
+                    # in_channels=(1 if args.dataset == "MNIST" else 3)
+                ),
+                gpu_list,
+            ).to(device)
+        prepare_model(model, args)
+        logger.info(model)
+
+        ensemble_models.append(model)
+    base_classifier = Ensemble(ensemble_models)
 
     checkpoint = torch.load(args.base_classifier, map_location=device)
     base_classifier.load_state_dict(checkpoint["state_dict"])
