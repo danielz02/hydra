@@ -114,13 +114,13 @@ def main():
             model = nn.parallel.DataParallel(
                 models.__dict__[args.arch](
                     cl, ll, args.init_type, num_classes=args.num_classes,
-                    in_channels=(1 if args.dataset == "MNIST" else 3)
+                    # in_channels=(1 if args.dataset == "MNIST" else 3)
                 ),
                 gpu_list,
             ).to(device)
         else:
             model = models.__dict__[args.arch](
-                cl, ll, args.init_type, num_classes=args.num_classes, in_channels=(1 if args.dataset == "MNIST" else 3)
+                cl, ll, args.init_type, num_classes=args.num_classes, # in_channels=(1 if args.dataset == "MNIST" else 3)
             ).to(device)
         logger.info(model)
 
@@ -199,7 +199,8 @@ def main():
         if os.path.isfile(args.resume):
             logger.info("=> loading checkpoint '{}'".format(args.resume))
             checkpoint = torch.load(args.resume, map_location=device)
-            args.start_epoch = checkpoint["epoch"]
+            if args.start_epoch is None:
+                args.start_epoch = checkpoint["epoch"]
             best_prec1 = checkpoint["best_prec1"]
             ensemble_model.load_state_dict(checkpoint["state_dict"])
             optimizer.load_state_dict(checkpoint["optimizer"])
