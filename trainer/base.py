@@ -31,7 +31,6 @@ def train(model, device, train_loader, sm_loader, criterion, optimizer, epoch, a
     if isinstance(model, Ensemble):
         for i, m in enumerate(model.models):
             model.models[i].train()
-            requires_grad_(model.models[i], True)
     end = time.time()
 
     dataloader = train_loader if sm_loader is None else zip(train_loader, sm_loader)
