@@ -11,6 +11,7 @@ import sys
 import os
 
 from models.ensemble import Ensemble
+from utils.model import prepare_model
 
 currentdir = os.path.dirname(os.path.realpath(__file__))
 parentdir = os.path.dirname(os.path.dirname(currentdir))
@@ -29,7 +30,7 @@ def get_minibatches(batch, num_batches):
         yield X[i * batch_size: (i + 1) * batch_size], y[i * batch_size: (i + 1) * batch_size]
 
 
-def DRT_Trainer(args, loader: DataLoader, models: Ensemble, criterion, optimizer: Optimizer, epoch: int, noise_sd: float,
+def DRT_Trainer(args, train_loader: DataLoader, sm_loader: DataLoader, models: Ensemble, criterion, optimizer: Optimizer, epoch: int, noise_sd: float,
                 attacker: Attacker, device: torch.device, writer=None):
     batch_time = AverageMeter("batch_time")
     data_time = AverageMeter("data_time")
@@ -40,13 +41,18 @@ def DRT_Trainer(args, loader: DataLoader, models: Ensemble, criterion, optimizer
     top5 = AverageMeter("top5")
     end = time.time()
 
-    for i in range(args.num_models):
-        models.models[i].train()
-        requires_grad_(models.models[i], True)
+    models.train()
+    dataloader = train_loader if sm_loader is None else zip(train_loader, sm_loader)
 
     softma = nn.Softmax(1)
-    for i, batch in enumerate(loader):
+    for i, batch in enumerate(dataloader):
         data_time.update(time.time() - end)
+
+        if args.is_semisup:
+            batch = (
+                torch.cat([d[0] for d in batch], 0),
+                torch.cat([d[1] for d in batch], 0),
+            )
 
         mini_batches = get_minibatches(batch, args.num_noise_vec)
         for inputs, targets in mini_batches:
@@ -63,7 +69,7 @@ def DRT_Trainer(args, loader: DataLoader, models: Ensemble, criterion, optimizer
                     models.models[j].eval()
                     adv = attacker.attack(models.models[j], inputs, targets, noises=noises)
                     models.models[j].train()
-                    requires_grad_(models.models[j], True)
+                    prepare_model(models.models[j], args)
                     adv_x.append(adv)
 
                 adv_input = []
@@ -84,6 +90,12 @@ def DRT_Trainer(args, loader: DataLoader, models: Ensemble, criterion, optimizer
                 else:
                     logits = models.models[j](noisy_input)
                 loss_std += criterion(logits, targets)
+                if args.trades_loss:
+                    loss_robust = (1.0 / len(inputs)) * nn.KLDivLoss(size_average=False)(
+                        F.log_softmax(models.models[j](noisy_input), dim=1),
+                        F.softmax(logits, dim=1),
+                    )
+                    loss_std += loss_robust
 
             rhsloss, rcount = 0, 0
             pred = []
@@ -147,11 +159,13 @@ def DRT_Trainer(args, loader: DataLoader, models: Ensemble, criterion, optimizer
                 'Epoch: [{0}][{1}/{2}]\t'
                 'Time {batch_time.avg:.3f}\t'
                 'Data {data_time.avg:.3f}\t'
-                'Loss {loss.avg:.4f}\t'
+                'Loss-Std {loss.avg:.4f}\t'
+                'Loss-GD {lhs.avg:.4f}\t'
+                'Loss-CM {rhs.avg:.4f}\t'
                 'Acc@1 {top1.avg:.3f}\t'
                 'Acc@5 {top5.avg:.3f}'.format(
-                    epoch, i, len(loader), batch_time=batch_time,
-                    data_time=data_time, loss=losses, top1=top1, top5=top5
+                    epoch, i, len(train_loader), batch_time=batch_time,
+                    data_time=data_time, loss=losses, lhs=losses_lhs, rhs=losses_rhs, top1=top1, top5=top5
                 )
             )
 
