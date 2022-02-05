@@ -13,9 +13,8 @@ class Ensemble(nn.Module):
         if len(self.models) > 1:
             outputs = 0
             for model in self.models:
-                outputs += F.softmax(model(x), dim=-1)
+                outputs += model(x)
             output = outputs / len(self.models)
-            output = torch.clamp(output, min=1e-40, max=None)
-            return torch.log(output)
+            return output
         else:
             return self.models[0](x)
