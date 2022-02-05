@@ -111,12 +111,12 @@ def parse_args():
     )
 
     # Randomized smoothing
-    parser.add_argument(
-        "--noise-std",
-        type=float,
-        default=0.25,
-        help="Std of normal distribution used to generate noise",
-    )
+    # parser.add_argument(
+    #     "--noise-std",
+    #     type=float,
+    #     default=0.25,
+    #     help="Std of normal distribution used to generate noise",
+    # )
 
     # parser.add_argument(
     #     "--scale_rand_init",
@@ -183,7 +183,7 @@ def parse_args():
         "--trainer",
         type=str,
         default="base",
-        choices=("base", "adv", "mixtrain", "crown-ibp", "smooth", "freeadv", "trs"),
+        choices=("base", "adv", "mixtrain", "crown-ibp", "smooth", "freeadv", "trs", "drt", "gaussian"),
         help="Natural (base) or adversarial or verifiable training",
     )
     parser.add_argument(
@@ -270,7 +270,7 @@ def parse_args():
     parser.add_argument(
         "--start-epoch",
         type=int,
-        default=0,
+        # default=0,
         help="manual start epoch (useful in restarts)",
     )
     parser.add_argument(
@@ -316,11 +316,21 @@ def parse_args():
         help="Number of base models in the ensemble"
     )
 
-    parser.add_argument('--coeff', default=2.0, type=float, required=True)
-    parser.add_argument('--lamda', default=2.0, type=float, required=True)
-    parser.add_argument('--scale', default=5.0, type=float, required=True)
+    # TRS Arguments
+    parser.add_argument('--coeff', default=2.0, type=float)
+    parser.add_argument('--lamda', default=2.0, type=float)
+    parser.add_argument('--scale', default=5.0, type=float)
     parser.add_argument('--plus-adv', action='store_true')
     parser.add_argument('--adv-eps', default=0.2, type=float)
     parser.add_argument('--init-eps', default=0.1, type=float)
+
+    # DRT Arguments
+    parser.add_argument('--noise-std', type=float)
+    parser.add_argument('--lhs-weights', type=float)
+    parser.add_argument('--rhs-weights', type=float)
+    parser.add_argument('--lr-step', type=int, default=50)
+    parser.add_argument('--trades-loss', action='store_true')
+    parser.add_argument('--adv-training', action='store_true')
+    parser.add_argument('--num-noise-vec', default=2, type=int, help="number of noise vectors. `m` in the paper.")
 
     return parser.parse_args()
