@@ -165,7 +165,6 @@ def parse_args():
     parser.add_argument(
         "--data-fraction",
         type=float,
-        default=1.0,
         help="Fraction of images used from training set",
     )
     parser.add_argument(
@@ -183,7 +182,7 @@ def parse_args():
         "--trainer",
         type=str,
         default="base",
-        choices=("base", "adv", "mixtrain", "crown-ibp", "smooth", "freeadv", "trs", "drt", "gaussian"),
+        choices=("base", "adv", "mixtrain", "crown-ibp", "smooth", "freeadv", "trs", "drt", "gaussian", "smoothadv"),
         help="Natural (base) or adversarial or verifiable training",
     )
     parser.add_argument(
@@ -224,7 +223,7 @@ def parse_args():
     )
 
     # Adversarial attacks
-    parser.add_argument("--epsilon", default=8.0 / 255, type=float, help="perturbation")
+    parser.add_argument("--epsilon", default=64 / 255, type=float, help="perturbation")
     parser.add_argument(
         "--num-steps", default=10, type=int, help="perturb number of steps"
     )
@@ -333,4 +332,22 @@ def parse_args():
     parser.add_argument('--adv-training', action='store_true')
     parser.add_argument('--num-noise-vec', default=2, type=int, help="number of noise vectors. `m` in the paper.")
 
-    return parser.parse_args()
+    # SmoothAdv Arguments
+    parser.add_argument('--attack', default='DDN', type=str, choices=['DDN', 'PGD'])
+    parser.add_argument(
+        '--warmup', default=1, type=int, help="Number of epochs over which the maximum allowed perturbation increases"
+                                              "linearly from zero to args.epsilon."
+    )
+    parser.add_argument(
+        '--no-grad-attack', action='store_true', help="Choice of whether to use gradients during attack or do"
+                                                      "the cheap trick"
+    )
+
+    # DDN-specific
+    parser.add_argument('--init-norm-DDN', default=256.0, type=float)
+    parser.add_argument('--gamma-DDN', default=0.05, type=float)
+
+    args = parser.parse_args()
+    args.epsilon = args.epsilon / 255 if args.epsilon > 1 else args.epsilon
+
+    return args
