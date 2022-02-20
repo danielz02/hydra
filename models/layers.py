@@ -34,15 +34,15 @@ class SubnetConv(nn.Conv2d):
     # Gradients to self.weight, self.bias have been turned off by default.
 
     def __init__(
-        self,
-        in_channels,
-        out_channels,
-        kernel_size,
-        stride=1,
-        padding=0,
-        dilation=1,
-        groups=1,
-        bias=True,
+            self,
+            in_channels,
+            out_channels,
+            kernel_size,
+            stride=1,
+            padding=0,
+            dilation=1,
+            groups=1,
+            bias=True,
     ):
         super(SubnetConv, self).__init__(
             in_channels,
@@ -65,12 +65,17 @@ class SubnetConv(nn.Conv2d):
     def set_prune_rate(self, k):
         self.k = k
 
-    def forward(self, x):
+    def _get_weight(self):
         # Get the subnetwork by sorting the scores.
         adj = GetSubnet.apply(self.popup_scores.abs(), self.k)
-
         # Use only the subnetwork in the forward pass.
         self.w = self.weight * adj
+
+        return self.w
+
+    def forward(self, x):
+        self.w = self._get_weight()
+
         x = F.conv2d(
             x, self.w, self.bias, self.stride, self.padding, self.dilation, self.groups
         )
@@ -94,12 +99,16 @@ class SubnetLinear(nn.Linear):
     def set_prune_rate(self, k):
         self.k = k
 
-    def forward(self, x):
+    def _get_weight(self):
         # Get the subnetwork by sorting the scores.
         adj = GetSubnet.apply(self.popup_scores.abs(), self.k)
-
         # Use only the subnetwork in the forward pass.
         self.w = self.weight * adj
+
+        return self.w
+
+    def forward(self, x):
+        self.w = self.__get_weight()
         x = F.linear(x, self.w, self.bias)
 
         return x
@@ -149,7 +158,7 @@ class SubspaceBN(nn.BatchNorm2d):
             bn_training = True
         else:
             bn_training = (self.running_mean is None) and (
-                self.running_var is None
+                    self.running_var is None
             )
         return F.batch_norm(
             input,
@@ -171,21 +180,27 @@ class SubspaceBN(nn.BatchNorm2d):
 class TwoParamConv(SubspaceConv):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.weight1 = nn.Parameter(torch.zeros_like(self.weight))
+        kwargs["bias"] = False
 
+        self.conv1 = SubnetConv(*args, **kwargs)
+
+    @torch.no_grad()
     def initialize(self, initialize_fn):
-        initialize_fn(self.weight1)
+        initialize_fn(self.conv1.weight)
 
 
 class ThreeParamConv(SubspaceConv):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.weight1 = nn.Parameter(torch.zeros_like(self.weight))
-        self.weight2 = nn.Parameter(torch.zeros_like(self.weight))
+        kwargs["bias"] = False
 
+        self.conv1 = SubnetConv(*args, **kwargs)
+        self.conv2 = SubnetConv(*args, **kwargs)
+
+    @torch.no_grad()
     def initialize(self, initialize_fn):
-        initialize_fn(self.weight1)
-        initialize_fn(self.weight2)
+        initialize_fn(self.conv1.weight)
+        initialize_fn(self.conv2.weight)
 
 
 class TwoParamBN(SubspaceBN):
@@ -212,12 +227,18 @@ class ThreeParamBN(SubspaceBN):
 
 
 class LinesConv(TwoParamConv):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
     def get_weight(self):
         w = (1 - self.alpha) * self.weight + self.alpha * self.weight1
         return w
 
 
 class LinesBN(TwoParamBN):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
     def get_weight(self):
         w = (1 - self.alpha) * self.weight + self.alpha * self.weight1
         b = (1 - self.alpha) * self.bias + self.alpha * self.bias1
@@ -225,25 +246,54 @@ class LinesBN(TwoParamBN):
 
 
 class CurvesConv(ThreeParamConv):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
     def get_weight(self):
-        w = (
-            ((1 - self.alpha) ** 2) * self.weight
-            + 2 * self.alpha * (1 - self.alpha) * self.weight2
-            + (self.alpha ** 2) * self.weight1
-        )
+        if getattr(self, "w0", False):
+            w = self._get_weight()
+        elif getattr(self, "w1", False):
+            w = self.conv1._get_weight()
+        elif getattr(self, "w2", False):
+            w = self.conv2._get_weight()
+        else:
+            w = (
+                    ((1 - self.alpha) ** 2) * self._get_weight()
+                    + 2 * self.alpha * (1 - self.alpha) * self.conv2._get_weight()
+                    + (self.alpha ** 2) * self.conv1._get_weight()
+            )
         return w
 
 
+class CurvesLinear(CurvesConv):
+    def __init__(self, in_features, out_features, *args, **kwargs):
+        kwargs["kernel_size"] = 1
+        kwargs["in_channels"] = in_features
+        kwargs["out_channels"] = out_features
+
+        super().__init__(*args, **kwargs)
+
+
 class CurvesBN(ThreeParamBN):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
     def get_weight(self):
-        w = (
-            ((1 - self.alpha) ** 2) * self.weight
-            + 2 * self.alpha * (1 - self.alpha) * self.weight2
-            + (self.alpha ** 2) * self.weight1
-        )
-        b = (
-            ((1 - self.alpha) ** 2) * self.bias
-            + 2 * self.alpha * (1 - self.alpha) * self.bias2
-            + (self.alpha ** 2) * self.bias1
-        )
+        if getattr(self, "w0", False):
+            w = self.weight, b = self.bias
+        elif getattr(self, "w0", False):
+            w = self.weight1, b = self.bias1
+        elif getattr(self, "w0", False):
+            w = self.weight2, b = self.bias2
+        else:
+            w = (
+                ((1 - self.alpha) ** 2) * self.weight
+                + 2 * self.alpha * (1 - self.alpha) * self.weight2
+                + (self.alpha ** 2) * self.weight1
+            )
+            b = (
+                ((1 - self.alpha) ** 2) * self.bias
+                + 2 * self.alpha * (1 - self.alpha) * self.bias2
+                + (self.alpha ** 2) * self.bias1
+            )
         return w, b
