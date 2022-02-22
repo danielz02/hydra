@@ -8,6 +8,8 @@ import torch
 import torch.autograd as autograd
 import torch.nn.functional as F
 
+from models.layers import CurvesConv, LinesConv
+
 currentdir = os.path.dirname(os.path.realpath(__file__))
 parentdir = os.path.dirname(os.path.dirname(currentdir))
 sys.path.append(parentdir)
@@ -86,11 +88,6 @@ def copy_code(outdir):
             os.mkdir(codedir)
         shutil.copy2(os.path.join(r, f), os.path.join(codedir, f))
     print("Code copied to '{}'".format(outdir))
-
-
-def requires_grad_(model: torch.nn.Module, requires_grad: bool) -> None:
-    for param in model.parameters():
-        param.requires_grad_(requires_grad)
 
 
 def Cosine(g1, g2):
@@ -235,3 +232,69 @@ def test(loader, models, criterion, epoch, device, writer=None, print_freq=10):
         writer.add_scalar('loss/test', losses.avg, epoch)
         writer.add_scalar('accuracy/test@1', top1.avg, epoch)
         writer.add_scalar('accuracy/test@5', top5.avg, epoch)
+
+
+# Utils for self-ensemble
+@torch.no_grad()
+def get_weight(m, i):
+    if i == 0:
+        return m.weight
+    return getattr(m, f"conv{i}").weight
+
+
+@torch.no_grad()
+def get_stats(model, args):
+    norms = {}
+    numerators = {}
+    difs = {}
+    cossim = 0
+    l2 = 0
+    num_points = 3 if args.layer_type == "curve" else 2
+
+    for i in range(num_points):
+        norms[f"{i}"] = 0.0
+        for j in range(i + 1, num_points):
+            numerators[f"{i}-{j}"] = 0.0
+            difs[f"{i}-{j}"] = 0.0
+
+    for m in model.modules():
+        if isinstance(m, CurvesConv) or isinstance(m, LinesConv):
+            for i in range(num_points):
+                vi = get_weight(m, i)
+                norms[f"{i}"] += vi.pow(2).sum()
+                for j in range(i + 1, num_points):
+                    vj = get_weight(m, j)
+                    numerators[f"{i}-{j}"] += (vi * vj).sum()
+                    difs[f"{i}-{j}"] += (vi - vj).pow(2).sum()
+
+    for i in range(num_points):
+        for j in range(i + 1, num_points):
+            cossim += numerators[f"{i}-{j}"].pow(2) / (
+                norms[f"{i}"] * norms[f"{j}"]
+            )
+            l2 += difs[f"{i}-{j}"]
+
+    l2 = l2.pow(0.5).item()
+    cossim = cossim.item()
+    return cossim, l2
+
+
+def cosine_diversity(model, args):
+    assert args.layer_type == "curve" and args.beta_div and args.beta_div > 0
+    num_points = 3 if args.layer_type == "curve" else 2
+    out = np.random.choice([i for i in range(num_points)], 2)
+
+    i, j = out[0], out[1]
+    num = 0.0
+    normi = 0.0
+    normj = 0.0
+    for m in model.modules():
+        if isinstance(m, CurvesConv) or isinstance(m, LinesConv):
+            vi = get_weight(m, i)
+            vj = get_weight(m, j)
+            num += (vi * vj).sum()
+            normi += vi.pow(2).sum()
+            normj += vj.pow(2).sum()
+
+    loss = args.beta_div * (torch.pow(num, 2) / (normi * normj))
+    return loss
