@@ -1,12 +1,13 @@
 import torch
 import torch.nn as nn
-import torchvision
+import models
 
 import os
 import math
 import numpy as np
 
-from models.layers import SubnetConv, SubnetLinear
+from models.ensemble import BezierCurve, Ensemble
+from models.layers import SubnetConv, SubnetLinear, SubspaceConv, CurvesConv, CurvesLinear, CurvesBN
 
 
 # TODO: avoid freezing bn_params
@@ -43,11 +44,59 @@ def get_layers(layer_type):
         Returns: (conv_layer, linear_layer)
     """
     if layer_type == "dense":
-        return nn.Conv2d, nn.Linear
+        return nn.Conv2d, nn.Linear, nn.BatchNorm2d
     elif layer_type == "subnet":
-        return SubnetConv, SubnetLinear
+        return SubnetConv, SubnetLinear, nn.BatchNorm2d
+    elif layer_type == "curve":
+        return CurvesConv, CurvesLinear, CurvesBN
     else:
         raise ValueError("Incorrect layer type")
+
+
+def create_model(args, gpu_list, device, logger):
+    ensemble_models = []
+    cl, ll, bn = get_layers(args.layer_type)
+
+    args.init_type = getattr(args, "init_type", "kaiming_normal")
+    for _ in range(args.num_models):
+        if len(gpu_list) >= 1 and args.layer_type == "curve":
+            assert args.num_models == 3
+            print("Using multiple GPUs")
+            model = nn.parallel.DataParallel(
+                models.__dict__[args.arch](
+                    cl, ll, args.init_type, num_classes=args.num_classes,
+                    args=args, bn_layer=bn
+                ),
+                gpu_list,
+            ).to(device)
+        elif len(gpu_list) >= 1:
+            print("Using multiple GPUs")
+            model = nn.parallel.DataParallel(
+                models.__dict__[args.arch](
+                    cl, ll, args.init_type, num_classes=args.num_classes,
+                    args=args
+                ),
+                gpu_list,
+            ).to(device)
+        else:
+            model = models.__dict__[args.arch](
+                cl, ll, args.init_type, num_classes=args.num_classes, args=args
+            ).to(device)
+
+        logger.info(model)
+
+        # Customize models for training/pruning/fine-tuning
+        prepare_model(model, args)
+        ensemble_models.append(model)
+        if args.layer_type == "curve":
+            break
+
+    if args.layer_type == "curve":
+        ensemble_model = BezierCurve(*ensemble_models, is_layerwise=args.layerwise)
+    else:
+        ensemble_model = Ensemble(ensemble_models)
+
+    return ensemble_model
 
 
 def show_gradients(model):
@@ -114,7 +163,7 @@ def initialize_scaled_score(model):
     for m in model.modules():
         if hasattr(m, "popup_scores"):
             n = nn.init._calculate_correct_fan(m.popup_scores, "fan_in")
-            # Close to kaiming unifrom init
+            # Close to kaiming uniform init
             m.popup_scores.data = (
                     math.sqrt(6 / n) * m.weight.data / torch.max(torch.abs(m.weight.data))
             )
@@ -166,7 +215,8 @@ def prepare_model(model, args):
     else:
         assert False, f"{args.exp_mode} mode is not supported"
 
-    initialize_scores(model, args.scores_init_type)
+    if args.scores_init_type is not None:
+        initialize_scores(model, args.scores_init_type)
 
 
 def subnet_to_dense(subnet_dict, p):
@@ -230,17 +280,17 @@ def current_model_pruned_fraction(model, result_dir, verbose=True):
         return np.mean(pl)
 
 
-def sanity_check_paramter_updates(model, last_ckpt):
+def sanity_check_paramter_updates(model, last_ckpt, layer_type):
     """
-        Check whether weigths/popup_scores gets updated or not compared to last ckpt.
+        Check whether weights/popup_scores gets updated or not compared to last ckpt.
         ONLY does it for 1 layer (to avoid computational overhead)
     """
     for i, v in model.named_modules():
-        if hasattr(v, "weight") and hasattr(v, "popup_scores"):
+        if hasattr(v, "weight") and (layer_type == "dense" or hasattr(v, "popup_scores")):
             if getattr(v, "weight") is not None:
                 w1 = getattr(v, "weight").data.cpu()
                 w2 = last_ckpt[i + ".weight"].data.cpu()
-            if getattr(v, "popup_scores") is not None:
+            if (layer_type == "subnet" or layer_type == "curve") and getattr(v, "popup_scores") is not None:
                 s1 = getattr(v, "popup_scores").data.cpu()
                 s2 = last_ckpt[i + ".popup_scores"].data.cpu()
-            return not torch.allclose(w1, w2), not torch.allclose(s1, s2)
+            return not torch.allclose(w1, w2), not torch.allclose(s1, s2) if layer_type == "subnet" else True
