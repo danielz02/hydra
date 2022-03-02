@@ -4,6 +4,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from utils.datasets import get_normalize_layer
+
 
 class BasicBlock(nn.Module):
     expansion = 1
@@ -114,34 +116,40 @@ class ResNet(nn.Module):
 
 
 # NOTE: Only supporting default (kaiming_init) initialization.
-def resnet18(conv_layer, linear_layer, init_type, **kwargs):
+def resnet18(conv_layer, linear_layer, init_type, args, **kwargs):
     assert init_type == "kaiming_normal", "only supporting default init for ResNets"
     return ResNet(conv_layer, linear_layer, BasicBlock, [2, 2, 2, 2], **kwargs)
 
 
-def resnet20(conv_layer, linear_layer, init_type, **kwargs):
+def resnet20(conv_layer, linear_layer, init_type, args, **kwargs):
     assert init_type == "kaiming_normal", "only supporting default init for ResNets"
     return ResNet(conv_layer, linear_layer, BasicBlock, [3, 3, 3], **kwargs)
 
 
-def resnet34(conv_layer, linear_layer, init_type, **kwargs):
+def resnet34(conv_layer, linear_layer, init_type, args, **kwargs):
     assert init_type == "kaiming_normal", "only supporting default init for ResNets"
     return ResNet(conv_layer, linear_layer, BasicBlock, [3, 4, 6, 3], **kwargs)
 
 
-def resnet50(conv_layer, linear_layer, init_type, **kwargs):
+def resnet50(conv_layer, linear_layer, init_type, args, **kwargs):
     assert init_type == "kaiming_normal", "only supporting default init for ResNets"
     return ResNet(conv_layer, linear_layer, Bottleneck, [3, 4, 6, 3], **kwargs)
 
 
-def resnet101(conv_layer, linear_layer, init_type, **kwargs):
+def resnet101(conv_layer, linear_layer, init_type, args, **kwargs):
     assert init_type == "kaiming_normal", "only supporting default init for ResNets"
     return ResNet(conv_layer, linear_layer, Bottleneck, [3, 4, 23, 3], **kwargs)
 
 
-def resnet110(conv_layer, linear_layer, init_type, **kwargs):
+def resnet110(conv_layer, linear_layer, init_type, args, **kwargs):
     assert init_type == "kaiming_normal", "only supporting default init for ResNets"
-    return ResNet(conv_layer, linear_layer, BasicBlock, [18, 18, 18, 18], **kwargs)
+    if args.normalize:
+        return nn.Sequential(
+            get_normalize_layer(dataset=args.dataset),
+            ResNet(conv_layer, linear_layer, BasicBlock, [18, 18, 18, 18], **kwargs)
+        )
+    else:
+        return ResNet(conv_layer, linear_layer, BasicBlock, [18, 18, 18, 18], **kwargs)
 
 
 def resnet152(conv_layer, linear_layer, init_type, **kwargs):
@@ -150,7 +158,7 @@ def resnet152(conv_layer, linear_layer, init_type, **kwargs):
 
 
 def test():
-    net = resnet20(nn.Conv2d, nn.Linear, "kaiming_normal")
+    net = resnet20(nn.Conv2d, nn.Linear, "kaiming_normal", None)
     y = net(torch.randn(1, 3, 32, 32))
     print(y.size())
 
