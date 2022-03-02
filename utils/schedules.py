@@ -4,6 +4,8 @@ import torch.nn as nn
 
 import numpy as np
 
+from models.ensemble import Ensemble, BezierCurve
+
 
 def get_lr_policy(lr_schedule):
     """Implement a new scheduler directly in this file.
@@ -18,9 +20,14 @@ def get_lr_policy(lr_schedule):
 
 
 def get_optimizer(model, args):
-    param = list(model.models[0].parameters())
-    for i in range(1, args.num_models):
-        param.extend(list(model.models[i].parameters()))
+    if isinstance(model, Ensemble) and not isinstance(model, BezierCurve):
+        param = list(model.models[0].parameters())
+        for i in range(1, args.num_models):
+            param.extend(list(model.models[i].parameters()))
+    elif isinstance(model, BezierCurve):
+        param = model.subspace_model.parameters()
+    else:
+        param = model.parameters()
     param = filter(lambda x: x.requires_grad, param)
 
     if args.optimizer == "sgd":
