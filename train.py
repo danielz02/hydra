@@ -14,6 +14,7 @@ import copy
 
 import torch
 import torch.nn as nn
+from torch.profiler import tensorboard_trace_handler
 from torch.utils.data.dataset import Dataset
 from torchvision import datasets, transforms
 from torch.utils.tensorboard import SummaryWriter
@@ -21,7 +22,7 @@ from torch.utils.tensorboard import SummaryWriter
 import models
 import data
 from args import parse_args
-from models.ensemble import Ensemble
+from models.ensemble import Ensemble, BezierCurve
 from utils.schedules import get_lr_policy, get_optimizer
 from utils.logging import (
     save_checkpoint,
@@ -38,7 +39,7 @@ from utils.model import (
     show_gradients,
     current_model_pruned_fraction,
     sanity_check_paramter_updates,
-    snip_init,
+    snip_init, create_model,
 )
 
 
@@ -106,34 +107,13 @@ def main():
     device = torch.device(f"cuda:{gpu_list[0]}" if use_cuda else "cpu")
 
     # Create model
-    ensemble_models = []
-    cl, ll = get_layers(args.layer_type)
-    for _ in range(args.num_models):
-        if len(gpu_list) > 1:
-            print("Using multiple GPUs")
-            model = nn.parallel.DataParallel(
-                models.__dict__[args.arch](
-                    cl, ll, args.init_type, num_classes=args.num_classes,
-                    # in_channels=(1 if args.dataset == "MNIST" else 3)
-                ),
-                gpu_list,
-            ).to(device)
-        else:
-            model = models.__dict__[args.arch](
-                cl, ll, args.init_type, num_classes=args.num_classes, # in_channels=(1 if args.dataset == "MNIST" else 3)
-            ).to(device)
-        logger.info(model)
-
-        # Customize models for training/pruning/fine-tuning
-        prepare_model(model, args)
-        ensemble_models.append(model)
-    ensemble_model = Ensemble(ensemble_models)
+    ensemble_model = create_model(args, gpu_list, device, logger)
 
     # Setup tensorboard writer
     writer = SummaryWriter(os.path.join(result_sub_dir, "tensorboard"))
 
     # Dataloader
-    D = data.__dict__[args.dataset](args, normalize=args.normalize)
+    D = data.__dict__[args.dataset](args)
     train_loader, test_loader = D.data_loaders()
 
     logger.info(args.dataset, D, len(train_loader.dataset), len(test_loader.dataset))
@@ -169,11 +149,11 @@ def main():
     # NOTE: scaled_init_scores will overwrite the scores in the pre-trained net.
     if args.scaled_score_init:
         for m in ensemble_model.models:
-            initialize_scaled_score(m)
+            initialize_scaled_score(m, k=args.scaled_score_init_k)
 
     # Scaled random initialization. Useful when training a high sparse net from scratch.
-    # If not used, a sparse net (without batch-norm) from scratch will not coverge.
-    # With batch-norm its not really necessary.
+    # If not used, a sparse net (without batch-norm) from scratch will not converge.
+    # With batch-norm it is not really necessary.
     if args.scale_rand_init:
         for m in ensemble_model.models:
             scale_rand_init(m, args.k)
@@ -291,7 +271,7 @@ def main():
         )
 
         # Check what parameters got updated in the current epoch.
-        sw, ss = sanity_check_paramter_updates(ensemble_model, last_ckpt)
+        sw, ss = sanity_check_paramter_updates(ensemble_model, last_ckpt, layer_type=args.layer_type)
         logger.info(
             f"Sanity check (exp-mode: {args.exp_mode}): Weight update - {sw}, Scores update - {ss}"
         )

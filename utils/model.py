@@ -156,7 +156,7 @@ def initialize_scores(model, init_type):
                 )
 
 
-def initialize_scaled_score(model):
+def initialize_scaled_score(model, k=6):
     print(
         "Initialization relevance score proportional to weight magnitudes (OVERWRITING SOURCE NET SCORES)"
     )
@@ -165,7 +165,7 @@ def initialize_scaled_score(model):
             n = nn.init._calculate_correct_fan(m.popup_scores, "fan_in")
             # Close to kaiming uniform init
             m.popup_scores.data = (
-                    math.sqrt(6 / n) * m.weight.data / torch.max(torch.abs(m.weight.data))
+                    math.sqrt(k / n) * m.weight.data / torch.max(torch.abs(m.weight.data))
             )
 
 

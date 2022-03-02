@@ -37,7 +37,7 @@ def parse_args():
         help="Number of output classes in the model",
     )
     parser.add_argument(
-        "--layer-type", type=str, choices=("dense", "subnet"), help="dense | subnet"
+        "--layer-type", type=str, choices=("dense", "subnet", "curve"), help="dense | subnet"
     )
     parser.add_argument(
         "--init_type",
@@ -64,7 +64,14 @@ def parse_args():
         "--scaled-score-init",
         action="store_true",
         default=False,
-        help="Init importance scores proportaional to weights (default kaiming init)",
+        help="Init importance scores proportional to weights (default kaiming init)",
+    )
+
+    parser.add_argument(
+        "--scaled-score-init-k",
+        type=int,
+        default=6,
+        help="Init importance scores proportional to weights (default kaiming init)",
     )
 
     parser.add_argument(
@@ -347,7 +354,14 @@ def parse_args():
     parser.add_argument('--init-norm-DDN', default=256.0, type=float)
     parser.add_argument('--gamma-DDN', default=0.05, type=float)
 
+    # Self-ensemble
+    parser.add_argument("--layerwise", action="store_true", help="Flag for enable layer-wise subspace sampling")
+    parser.add_argument("--beta-div", type=float, help="Weight of cosine diversity regularization term")
+
     args = parser.parse_args()
     args.epsilon = args.epsilon / 255 if args.epsilon > 1 else args.epsilon
+
+    if args.layerwise:
+        assert args.layer_type == "curve"
 
     return args
