@@ -108,7 +108,7 @@ class SubnetLinear(nn.Linear):
         return self.w
 
     def forward(self, x):
-        self.w = self.__get_weight()
+        self.w = self._get_weight()
         x = F.linear(x, self.w, self.bias)
 
         return x
