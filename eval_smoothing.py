@@ -1,8 +1,6 @@
 # evaluate a smoothed classifier on a dataset
 import argparse
-import os
 import sys
-import numpy as np
 from time import time
 import datetime
 import importlib
@@ -11,12 +9,10 @@ import logging
 import torch
 import torch.nn as nn
 
-import models
 import data
-from models.ensemble import Ensemble
 
-from utils.smoothing import Smooth, quick_smoothing, eval_quick_smoothing
-from utils.model import get_layers, prepare_model
+from utils.smoothing import Smooth
+from utils.model import create_model
 
 parser = argparse.ArgumentParser(description="Certify many examples")
 parser.add_argument(
@@ -63,7 +59,7 @@ parser.add_argument(
     "--num-classes", type=int, default=10, help="Number of output classes in the model",
 )
 parser.add_argument(
-    "--layer-type", type=str, choices=("dense", "subnet"), help="dense | subnet layers"
+    "--layer-type", type=str, choices=("dense", "subnet", "curve"), help="dense | subnet layers"
 )
 parser.add_argument(
     "--noise_std", type=float, default=0.25, help="noise hyperparameter"
@@ -79,7 +75,7 @@ parser.add_argument(
     "--gpu", type=str, default="0", help="Comma separated list of GPU ids"
 )
 parser.add_argument("--N0", type=int, default=100)
-parser.add_argument("--N", type=int, default=10000, help="number of samples to use")
+parser.add_argument("--N", type=int, default=100000, help="number of samples to use")
 parser.add_argument("--alpha", type=float, default=0.001, help="failure probability")
 parser.add_argument(
     "--print-freq",
@@ -103,6 +99,9 @@ parser.add_argument(
 )
 
 parser.add_argument("--k", type=float)
+parser.add_argument("--sub-model", type=int)
+parser.add_argument("--subspace-alpha", type=float)
+parser.add_argument("--validation-only", action="store_true")
 
 args = parser.parse_args()
 
@@ -118,35 +117,20 @@ if __name__ == "__main__":
     device = torch.device(f"cuda:{gpu_list[0]}")
 
     # Create model
-    ensemble_models = []
-    cl, ll = get_layers(args.layer_type)
-    for _ in range(args.num_models):
-        if len(gpu_list) > 1:
-            print("Using multiple GPUs")
-            model = nn.parallel.DataParallel(
-                models.__dict__[args.arch](
-                    cl, ll, "kaiming_normal", num_classes=args.num_classes,
-                    # in_channels=(1 if args.dataset == "MNIST" else 3)
-                ),
-                gpu_list,
-            ).to(device)
-        else:
-            model = nn.parallel.DataParallel(
-                models.__dict__[args.arch](
-                    cl, ll, "kaiming_normal", num_classes=args.num_classes,
-                    # in_channels=(1 if args.dataset == "MNIST" else 3)
-                ),
-                gpu_list,
-            ).to(device)
-        prepare_model(model, args)
-        logger.info(model)
-
-        ensemble_models.append(model)
-    base_classifier = Ensemble(ensemble_models)
+    if args.layer_type == "curve":
+        args.layerwise = False
+    base_classifier = create_model(args, gpu_list, device, logger)
 
     checkpoint = torch.load(args.base_classifier, map_location=device)
     base_classifier.load_state_dict(checkpoint["state_dict"])
 
+    if args.sub_model is not None:
+        base_classifier = base_classifier.models[args.sub_model]
+
+    if args.layer_type == "curve":
+        base_classifier.fixed_alpha = args.subspace_alpha
+
+    base_classifier.eval()
     smoothed_classifier = Smooth(base_classifier, args.num_classes, args.noise_std)
 
     # prepare output file
@@ -154,7 +138,7 @@ if __name__ == "__main__":
     print("idx\tlabel\tpredict\tradius\tcorrect\ttime", file=f, flush=True)
 
     # Dataset
-    D = data.__dict__[args.dataset](args, normalize=args.normalize)
+    D = data.__dict__[args.dataset](args)
     train_loader, test_loader = D.data_loaders()
     dataset = test_loader.dataset  # Certify test inputs only (default)
 
@@ -168,8 +152,8 @@ if __name__ == "__main__":
 
     # eval_quick_smoothing(base_classifier, train_loader, device, sigma=0.25, nbatch=10)
 
-    base_classifier.eval()
-    # sys.exit()
+    if args.validation_only:
+        sys.exit()
 
     for i in range(len(dataset)):
 
