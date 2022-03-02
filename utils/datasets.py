@@ -40,11 +40,11 @@ def get_num_classes(dataset: str):
 
 def get_normalize_layer(dataset: str) -> torch.nn.Module:
     """Return the dataset's normalization layer"""
-    if dataset == "imagenet":
+    if dataset.lower() == "imagenet":
         return NormalizeLayer(_IMAGENET_MEAN, _IMAGENET_STDDEV)
-    elif dataset == "cifar10":
+    elif dataset.lower() == "cifar10":
         return NormalizeLayer(_CIFAR10_MEAN, _CIFAR10_STDDEV)
-    elif dataset == "mnist":
+    elif dataset.lower() == "mnist":
         return NormalizeLayer(_MNIST_MEAN, _MNIST_STDDEV)
 
 
