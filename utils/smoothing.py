@@ -4,6 +4,9 @@ from scipy.stats import norm, binom_test
 import numpy as np
 from math import ceil
 from statsmodels.stats.proportion import proportion_confint
+from torch import nn
+
+from models.ensemble import Ensemble, BezierCurve
 
 
 def eval_quick_smoothing(model, loader, device, sigma=0.25, nbatch=10):
@@ -175,7 +178,16 @@ class Smooth(object):
 
                 batch = x.repeat((this_batch_size, 1, 1, 1))
                 noise = torch.randn_like(batch, device=device) * self.sigma
-                predictions = self.base_classifier(batch + noise).argmax(1)
+                noisy_input = batch + noise
+                if isinstance(self.base_classifier, Ensemble) and not isinstance(self.base_classifier, BezierCurve):
+                    softmax = nn.Softmax(1)
+                    feature = 0
+                    for m in self.base_classifier.models:
+                        feature += softmax(m(noisy_input))
+                    feature /= len(self.base_classifier.models)
+                else:
+                    feature = self.base_classifier(noisy_input)
+                predictions = feature.argmax(1)
                 counts += self._count_arr(
                     predictions.data.cpu().numpy(), self.num_classes
                 )

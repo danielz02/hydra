@@ -1,15 +1,18 @@
 import time
 
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 import torchvision
+import torch.nn as nn
 
-from models.ensemble import Ensemble
-from utils.logging import AverageMeter, ProgressMeter
 from utils.eval import accuracy
+from models.ensemble import Ensemble, BezierCurve
+from utils.logging import AverageMeter, ProgressMeter
+
 
 # TODO: support sm_loader when len(sm_loader.dataset) < len(train_loader.dataset)
+from utils.utils_ensemble import cosine_diversity, get_stats
+
+
 def train(
     model, device, train_loader, sm_loader, criterion, optimizer, epoch, args, writer
 ):
@@ -20,9 +23,11 @@ def train(
     losses = AverageMeter("Loss", ":.4f")
     top1 = AverageMeter("Acc_1", ":6.2f")
     top5 = AverageMeter("Acc_5", ":6.2f")
+    cosine = AverageMeter("Cosine", ":6.2f")
+    l2 = AverageMeter("L2", ":6.2f")
     progress = ProgressMeter(
         len(train_loader),
-        [batch_time, data_time, losses, top1, top5],
+        [batch_time, data_time, losses, cosine, l2, top1, top5],
         prefix="Epoch: [{}]".format(epoch),
     )
 
@@ -70,27 +75,38 @@ def train(
         else:
             std = 1
         noise = (torch.randn_like(images) / std).to(device) * args.noise_std
-        if isinstance(model, Ensemble):
-            loss = 0
+        if isinstance(model, Ensemble) and not isinstance(model, BezierCurve):
+            loss = []
             output_ensemble = 0
             for m in model.models:
                 output = m(images + noise)
                 output_ensemble += output
-                loss += nn.CrossEntropyLoss()(output, target)
+                loss.append(nn.CrossEntropyLoss()(output, target))
             output = output_ensemble / len(model.models)
         else:
             output = model(images + noise)
             loss = nn.CrossEntropyLoss()(output, target)
 
+        if args.layer_type == "curve" and args.beta_div and args.beta_div > 0:
+            loss += cosine_diversity(model, args)
+
+        optimizer.zero_grad()
+        if isinstance(loss, list):
+            for sub_loss in loss:
+                sub_loss.backward()
+            loss = sum(loss)
+        else:
+            loss.backward()
+        optimizer.step()
+
         # measure accuracy and record loss
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
+        weight_cosine, weight_l2 = get_stats(model, args)
         losses.update(loss.item(), images.size(0))
         top1.update(acc1[0], images.size(0))
         top5.update(acc5[0], images.size(0))
-
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+        cosine.update(weight_cosine, images.size(0))
+        l2.update(weight_l2, images.size(0))
 
         # measure elapsed time
         batch_time.update(time.time() - end)
@@ -106,5 +122,5 @@ def train(
         if i == 0:
             writer.add_image(
                 "training-images",
-                torchvision.utils.make_grid(images[0 : len(images) // 4]),
+                torchvision.utils.make_grid(images[0: len(images) // 4]),
             )
