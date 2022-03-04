@@ -70,6 +70,9 @@ def DRT_Trainer(
             noises = [torch.randn_like(inputs, device=device) * noise_sd
                       for _ in range(args.num_noise_vec)]
 
+            if isinstance(models, BezierCurve):
+                models.fixed_alpha = np.random.uniform()
+
             if args.adv_training:
                 if isinstance(models, BezierCurve):
                     raise NotImplementedError("SmoothAdv is not supported with self-ensemble!")
