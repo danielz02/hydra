@@ -357,6 +357,7 @@ def parse_args():
     # Self-ensemble
     parser.add_argument("--layerwise", action="store_true", help="Flag for enable layer-wise subspace sampling")
     parser.add_argument("--beta-div", type=float, help="Weight of cosine diversity regularization term")
+    parser.add_argument("--sample-per-batch", action="store_true")
 
     args = parser.parse_args()
     args.epsilon = args.epsilon / 255 if args.epsilon > 1 else args.epsilon

@@ -51,6 +51,7 @@ class SubspaceEnsemble(Ensemble):
     def __init__(self, subspace, num_models=3):
         super().__init__([subspace] * num_models)
         self.alpha = np.random.uniform(size=num_models)
+        self.num_models = num_models
 
         assert len(self.models) == len(self.alpha)
 

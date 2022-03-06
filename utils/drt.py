@@ -73,6 +73,9 @@ def DRT_Trainer(
             noises = [torch.randn_like(inputs, device=device) * noise_sd
                       for _ in range(args.num_noise_vec)]
 
+            if isinstance(models, SubspaceEnsemble) and args.sample_per_batch:
+                models.reset_alpha()
+
             if args.adv_training:
                 if isinstance(models, SubspaceEnsemble):
                     raise NotImplementedError("SmoothAdv is not supported with self-ensemble!")
