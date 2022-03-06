@@ -21,10 +21,9 @@ class Ensemble(nn.Module):
             return self.models[0](x)
 
 
-class BezierCurve(Ensemble):
+class BezierCurve(nn.Module):
     def __init__(self, subspace_model, is_layerwise: bool):
-        models = [BezierEndPoint(subspace_model, i) for i in range(3)]
-        super().__init__(models)
+        super().__init__()
 
         self.layerwise = is_layerwise
         self.subspace_model = subspace_model
@@ -35,9 +34,6 @@ class BezierCurve(Ensemble):
             fix_alpha = 0.5
         elif hasattr(self, "fixed_alpha"):
             fix_alpha = self.fixed_alpha
-
-        if fix_alpha:
-            print(f"Using fixed alpha {fix_alpha}")
 
         alpha = np.random.uniform(0, 1) if not fix_alpha else fix_alpha
         for m in self.subspace_model.modules():
@@ -51,17 +47,23 @@ class BezierCurve(Ensemble):
         return self.subspace_model(x)
 
 
-class BezierEndPoint(nn.Module):
-    def __init__(self, bezier_subspace, idx: int):
-        assert idx in [0, 1, 2]
-        super().__init__()
+class SubspaceEnsemble(Ensemble):
+    def __init__(self, subspace, num_models=3):
+        super().__init__([subspace] * num_models)
+        self.alpha = np.random.uniform(size=num_models)
 
-        self.point_idx = idx
-        self.bezier_subspace = bezier_subspace
+        assert len(self.models) == len(self.alpha)
+
+    def reset_alpha(self):
+        self.alpha = np.random.uniform(size=self.num_models)
 
     def forward(self, x):
-        setattr(self.bezier_subspace, f"w{self.point_idx}", True)
-        out = self.bezier_subspace(x)
-        delattr(self.bezier_subspace, f"w{self.point_idx}")
-
-        return out
+        if len(self.models) > 1:
+            outputs = 0
+            for alpha, model in zip(self.alpha, self.models):
+                model.fixed_alpha = alpha
+                outputs += model(x)
+            output = outputs / len(self.models)
+            return output
+        else:
+            return self.models[0](x)

@@ -12,7 +12,7 @@ import torch.nn.functional as F
 import sys
 import os
 
-from models.ensemble import Ensemble, BezierCurve
+from models.ensemble import Ensemble, BezierCurve, SubspaceEnsemble
 from utils.model import prepare_model
 
 currentdir = os.path.dirname(os.path.realpath(__file__))
@@ -51,6 +51,9 @@ def DRT_Trainer(
     models.train()
     dataloader = train_loader if sm_loader is None else zip(train_loader, sm_loader)
 
+    if isinstance(models, BezierCurve):
+        models = SubspaceEnsemble(models)
+
     softma = nn.Softmax(1)
     for i, batch in enumerate(dataloader):
         data_time.update(time.time() - end)
@@ -70,11 +73,8 @@ def DRT_Trainer(
             noises = [torch.randn_like(inputs, device=device) * noise_sd
                       for _ in range(args.num_noise_vec)]
 
-            if isinstance(models, BezierCurve):
-                models.fixed_alpha = np.random.uniform()
-
             if args.adv_training:
-                if isinstance(models, BezierCurve):
+                if isinstance(models, SubspaceEnsemble):
                     raise NotImplementedError("SmoothAdv is not supported with self-ensemble!")
                 adv_x = []
                 for j in range(args.num_models):
@@ -97,7 +97,7 @@ def DRT_Trainer(
             targets = targets.repeat(args.num_noise_vec)
             loss_std = 0
 
-            if isinstance(models, BezierCurve):
+            if isinstance(models, SubspaceEnsemble):
                 logits = models(noisy_input)
                 loss_std = criterion(logits, targets)
             else:
@@ -116,10 +116,9 @@ def DRT_Trainer(
                     cur_input = adv_input[j]
                 else:
                     cur_input = noisy_input
-                if isinstance(models, BezierCurve):
-                    output = models(cur_input)
-                else:
-                    output = models.models[j](cur_input)
+                if isinstance(models, SubspaceEnsemble):
+                    models.models[j].fixed_alpha = models.alpha[j]
+                output = models.models[j](cur_input)
                 _, predicted = output.max(1)
                 pred.append(predicted == targets)
                 predicted = softma(output.sort()[0])
@@ -160,8 +159,8 @@ def DRT_Trainer(
             top1.update(acc1.item(), batch_size)
             top5.update(acc5.item(), batch_size)
 
-            if args.layer_type == "curve":
-                weight_cosine, weight_l2 = get_stats(models, args)
+            if isinstance(models, SubspaceEnsemble):
+                weight_cosine, weight_l2 = get_stats(models.models[0], args)
                 cosine.update(weight_cosine, batch_size)
                 l2.update(weight_l2, batch_size)
 
@@ -199,3 +198,7 @@ def DRT_Trainer(
     writer.add_scalar('batch_time', batch_time.avg, epoch)
     writer.add_scalar('accuracy/train@1', top1.avg, epoch)
     writer.add_scalar('accuracy/train@5', top5.avg, epoch)
+
+    if isinstance(models, SubspaceEnsemble):
+        for i, alpha in enumerate(models.alpha):
+            writer.add_scalar(f'alpha/{i}', alpha, epoch)
