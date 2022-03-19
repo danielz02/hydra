@@ -37,7 +37,7 @@ def parse_args():
         help="Number of output classes in the model",
     )
     parser.add_argument(
-        "--layer-type", type=str, choices=("dense", "subnet", "curve"), help="dense | subnet"
+        "--layer-type", type=str, choices=("dense", "subnet", "curve", "line"), help="dense | subnet"
     )
     parser.add_argument(
         "--init_type",
@@ -337,7 +337,12 @@ def parse_args():
     parser.add_argument('--lr-step', type=int, default=50)
     parser.add_argument('--trades-loss', action='store_true')
     parser.add_argument('--adv-training', action='store_true')
+    parser.add_argument('--drt-stab', action='store_true', help="add STAB to DRT")
     parser.add_argument('--num-noise-vec', default=2, type=int, help="number of noise vectors. `m` in the paper.")
+
+    # Consistency Loss
+    parser.add_argument('--drt-consistency', action='store_true', help="add Consistency Loss to DRT")
+    parser.add_argument('--lbd', type=float, help="weight on Consistency Loss")
 
     # SmoothAdv Arguments
     parser.add_argument('--attack', default='DDN', type=str, choices=['DDN', 'PGD'])
@@ -363,6 +368,10 @@ def parse_args():
     args.epsilon = args.epsilon / 255 if args.epsilon > 1 else args.epsilon
 
     if args.layerwise:
-        assert args.layer_type == "curve"
+        assert args.layer_type in ["curve", "line"]
+    if args.consistency:
+        assert args.lbd
+
+    assert not (args.drt_consistency and args.drt_stab)
 
     return args
