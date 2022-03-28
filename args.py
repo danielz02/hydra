@@ -189,7 +189,8 @@ def parse_args():
         "--trainer",
         type=str,
         default="base",
-        choices=("base", "adv", "mixtrain", "crown-ibp", "smooth", "freeadv", "trs", "drt", "gaussian", "smoothadv"),
+        choices=("base", "adv", "mixtrain", "crown-ibp", "smooth", "freeadv", "trs", "drt", "gaussian", "consistency",
+                 "smoothadv"),
         help="Natural (base) or adversarial or verifiable training",
     )
     parser.add_argument(
@@ -369,7 +370,7 @@ def parse_args():
 
     if args.layerwise:
         assert args.layer_type in ["curve", "line"]
-    if args.consistency:
+    if args.drt_consistency:
         assert args.lbd
 
     assert not (args.drt_consistency and args.drt_stab)
