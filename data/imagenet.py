@@ -7,6 +7,7 @@ import pickle
 from PIL import Image
 import torch.utils.data as data
 from torchvision import datasets, transforms
+from torchvision.datasets import ImageFolder
 from torch.utils.data import DataLoader, SubsetRandomSampler, RandomSampler
 
 
@@ -34,6 +35,8 @@ class imagenet:
         self.tr_train = transforms.Compose(self.tr_train)
         self.tr_test = transforms.Compose(self.tr_test)
 
+        self.train_sampler = None
+
     def data_loaders(self, **kwargs):
         trainset = ImageFolderLMDB(
             os.path.join(self.args.data_dir, "train.lmdb"), self.tr_train
@@ -41,12 +44,18 @@ class imagenet:
         testset = ImageFolderLMDB(
             os.path.join(self.args.data_dir, "val.lmdb"), self.tr_test
         )
+        # trainset = ImageFolder(
+        #     os.path.join(self.args.data_dir, "train"), self.tr_train
+        # )
+        # testset = ImageFolder(
+        #     os.path.join(self.args.data_dir, "val"), self.tr_test
+        # )
 
         if self.args.ddp:
             import horovod.torch as hvd
             import torch.multiprocessing as mp
 
-            kwargs = {'num_workers': 1, 'pin_memory': True}
+            kwargs = {'num_workers': 4, 'pin_memory': True}
             # When supported, use 'forkserver' to spawn dataloader workers instead of 'fork' to prevent
             # issues with Infiniband implementations that are not fork-safe
             if (kwargs.get('num_workers', 0) > 0 and hasattr(mp, '_supports_context') and
@@ -60,17 +69,18 @@ class imagenet:
                 testset, num_replicas=hvd.size(), rank=hvd.rank()
             )
             train_loader = torch.utils.data.DataLoader(
-                trainset, batch_size=self.args.batch_size, sampler=train_sampler, **kwargs
+                trainset, batch_size=self.args.batch_size, sampler=train_sampler, persistent_workers=True, timeout=60, **kwargs
             )
             test_loader = torch.utils.data.DataLoader(
-                testset, batch_size=self.args.test_batch_size, sampler=test_sampler, **kwargs
+                testset, batch_size=self.args.test_batch_size, sampler=test_sampler, persistent_workers=True, timeout=60, **kwargs
             )
+            self.train_sampler = train_sampler
         else:
             train_loader = DataLoader(
                 trainset,
                 shuffle=True,
                 batch_size=self.args.batch_size,
-                num_workers=16,
+                num_workers=8,
                 pin_memory=True,
                 **kwargs,
             )
@@ -79,13 +89,13 @@ class imagenet:
                 testset,
                 batch_size=self.args.test_batch_size,
                 shuffle=False,
-                num_workers=16,
+                num_workers=8,
                 pin_memory=True,
                 **kwargs,
             )
 
         print(
-            f"Traing loader: {len(train_loader.dataset)} images, Test loader: {len(test_loader.dataset)} images"
+            f"Training loader: {len(train_loader.dataset)} images, Test loader: {len(test_loader.dataset)} images"
         )
         return train_loader, test_loader
 
@@ -93,21 +103,35 @@ class imagenet:
 class ImageFolderLMDB(data.Dataset):
     def __init__(self, db_path, transform=None, target_transform=None):
         self.db_path = db_path
-        self.env = lmdb.open(db_path, subdir=os.path.isdir(db_path),
-                             readonly=True, lock=False,
-                             readahead=False, meminit=False)
-        with self.env.begin(write=False) as txn:
-            self.length = loads_data(txn.get(b'__len__'))
-            self.keys = loads_data(txn.get(b'__keys__'))
+        self.env = None
+        self.txn = None
 
         self.transform = transform
         self.target_transform = target_transform
 
-    def __getitem__(self, index):
-        env = self.env
+        env = lmdb.open(
+            self.db_path, subdir=os.path.isdir(self.db_path),
+            readonly=True, lock=False,
+            readahead=False, meminit=False
+        )
         with env.begin(write=False) as txn:
-            byteflow = txn.get(self.keys[index])
+            self.length = pickle.loads(txn.get(b'__len__'))
+            self.keys = pickle.loads(txn.get(b'__keys__'))
 
+    def _init_db(self):
+        self.env = lmdb.open(
+            self.db_path, subdir=os.path.isdir(self.db_path),
+            readonly=True, lock=False,
+            readahead=False, meminit=False
+        )
+        self.txn = self.env.begin(write=False, buffers=True)
+
+    def __getitem__(self, index):
+        if self.txn is None:
+            self._init_db()
+
+        # with self.env.begin(write=False) as txn:
+        byteflow = self.txn.get(self.keys[index])
         unpacked = loads_data(byteflow)
 
         # load img
@@ -123,13 +147,13 @@ class ImageFolderLMDB(data.Dataset):
         if self.transform is not None:
             img = self.transform(img)
 
-        im2arr = np.array(img)
+        # im2arr = np.array(img)
 
         if self.target_transform is not None:
             target = self.target_transform(target)
 
-        # return img, target
-        return im2arr, target
+        return img, target
+        # return im2arr, target
 
     def __len__(self):
         return self.length
