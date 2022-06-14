@@ -36,7 +36,7 @@ def get_minibatches(batch, num_batches):
 def DRT_Trainer(
         args, train_loader: DataLoader, sm_loader: DataLoader, models: Ensemble | Subspace, criterion,
         optimizer: Optimizer, epoch: int, noise_sd: float, attacker: Attacker, device: torch.device, writer=None,
-        train_sampler=None, scalar: GradScaler = None
+        train_sampler=None, scaler: GradScaler = None
 ):
     if args.ddp:
         import horovod.torch as hvd
@@ -100,7 +100,7 @@ def DRT_Trainer(
 
         mini_batches = get_minibatches(batch, args.num_noise_vec)
         for inputs, targets in mini_batches:
-            inputs, targets = inputs.to(device), targets.to(device)
+            inputs, targets = inputs.to(device, non_blocking=True), targets.to(device, non_blocking=True)
             batch_size = inputs.size(0)
 
             noises = [torch.randn_like(inputs, device=device) * noise_sd
@@ -112,79 +112,92 @@ def DRT_Trainer(
             noisy_input = torch.cat([inputs + noise for noise in noises], dim=0)
             noisy_input.requires_grad = True
 
+            outputs = []
             targets = targets.repeat(args.num_noise_vec)
-            loss_std = torch.tensor(0., device=device)
-            loss_stab = torch.tensor(0., device=device)
-            loss_consistency = torch.tensor(0., device=device)
+            with torch.autocast(device_type=device, enabled=args.amp):
+                loss_std = torch.tensor(0., device=device)
+                loss_stab = torch.tensor(0., device=device)
+                loss_consistency = torch.tensor(0., device=device)
 
-            if isinstance(models, Subspace):
-                for j in range(args.num_models):
-                    models.fixed_alpha = alphas[j]
-                    logits = models(noisy_input)
-                    loss_std += criterion(logits, targets)
-                    if args.drt_stab:
-                        clean_input = torch.cat([inputs for _ in noises], dim=0)
-                        loss_stab += stability_loss(noisy_logits=logits, clean_logits=models(clean_input))
-                    elif args.drt_consistency:
-                        logits_chunk = torch.chunk(logits, args.num_noise_vec, dim=0)
-                        loss_consistency += consistency_loss(logits_chunk, lbd=args.lbd)
-            else:
-                for j in range(args.num_models):
-                    logits = models.models[j](noisy_input)
-                    loss_std += criterion(logits, targets)
-                    if args.drt_stab:
-                        clean_input = torch.cat([inputs for _ in noises], dim=0)
-                        loss_stab += stability_loss(noisy_logits=logits, clean_logits=models.models[j](clean_input))
-                    elif args.drt_consistency:
-                        logits_chunk = torch.chunk(logits, args.num_noise_vec, dim=0)
-                        loss_consistency += consistency_loss(logits_chunk, lbd=args.lbd)
+                if isinstance(models, Subspace):
+                    for j in range(args.num_models):
+                        models.fixed_alpha = alphas[j]
+                        logits = models(noisy_input)
+                        loss_std += criterion(logits, targets)
+                        if args.drt_stab:
+                            clean_input = torch.cat([inputs for _ in noises], dim=0)
+                            loss_stab += stability_loss(noisy_logits=logits, clean_logits=models(clean_input))
+                        elif args.drt_consistency:
+                            logits_chunk = torch.chunk(logits, args.num_noise_vec, dim=0)
+                            loss_consistency += consistency_loss(logits_chunk, lbd=args.lbd)
+                        outputs.append(logits)
+                else:
+                    for j in range(args.num_models):
+                        logits = models.models[j](noisy_input)
+                        loss_std += criterion(logits, targets)
+                        if args.drt_stab:
+                            clean_input = torch.cat([inputs for _ in noises], dim=0)
+                            loss_stab += stability_loss(noisy_logits=logits, clean_logits=models.models[j](clean_input))
+                        elif args.drt_consistency:
+                            logits_chunk = torch.chunk(logits, args.num_noise_vec, dim=0)
+                            loss_consistency += consistency_loss(logits_chunk, lbd=args.lbd)
+                        outputs.append(logits)
 
-            rhsloss, rcount = torch.tensor(0., device=device), 0
+            with torch.autocast(device_type=device, enabled=args.amp):
+                rhsloss, rcount = torch.tensor(0., device=device), 0
             pred = []
             margin = []
             for j in range(args.num_models):
-                cur_input = noisy_input
-                if isinstance(models, Subspace):
-                    models.fixed_alpha = alphas[j]
-                    output = models(cur_input)
-                else:
-                    output = models.models[j](cur_input)
+                output = outputs[j]
 
-                _, predicted = output.max(1)
-                pred.append(predicted == targets)
-                predicted = softma(output.sort()[0])
-                predicted = predicted[:, -1] - predicted[:, -2]
+                with torch.autocast(device_type=device, enabled=args.amp):
+                    _, predicted = output.max(1)
+                    pred.append(predicted == targets)
+                    predicted = softma(output.sort()[0])
+                    predicted = predicted[:, -1] - predicted[:, -2]
 
                 grad_outputs = torch.ones(predicted.shape)
                 grad_outputs = grad_outputs.to(device)
 
-                grad = torch.autograd.grad(predicted, cur_input, grad_outputs=grad_outputs,
-                                           create_graph=True, only_inputs=True)[0]
+                if args.amp:
+                    grad = torch.autograd.grad(
+                        scaler.scale(predicted), noisy_input, grad_outputs=grad_outputs, create_graph=True,
+                        only_inputs=True
+                    )[0]
+                    inv_scale = 1. / scaler.get_scale()
+                    grad *= inv_scale
+                else:
+                    grad = torch.autograd.grad(
+                        predicted, noisy_input, grad_outputs=grad_outputs, create_graph=True, only_inputs=True
+                    )[0]
 
                 margin.append(grad.view(grad.size(0), -1))
 
-                flg = pred[j].type(torch.FloatTensor).to(device)
-                rhsloss += torch.sum(flg * predicted)
-                rcount += torch.sum(flg)
+                with torch.autocast(device_type=device, enabled=args.amp):
+                    flg = pred[j].type(torch.FloatTensor).to(device)
+                    rhsloss += torch.sum(flg * predicted)
+                    rcount += torch.sum(flg)
 
-            rhsloss /= max(rcount, 1)
+            with torch.autocast(device_type=device, enabled=args.amp):
+                rhsloss /= max(rcount, 1)
 
-            lhsloss, N = torch.tensor(0., device=device), torch.tensor(0., device=device)
-            mse = nn.MSELoss(reduction='none')
-            for ii in range(args.num_models):
-                for j in range(ii + 1, args.num_models):
-                    flg = (pred[ii] & pred[j]).type(torch.FloatTensor).to(device)
-                    grad_norm = torch.sum(mse(margin[ii], -margin[j]), dim=1)
-                    lhsloss += torch.sum(grad_norm * flg)
-                    N += torch.sum(flg)
+                lhsloss, N = torch.tensor(0., device=device), torch.tensor(0., device=device)
 
-            lhsloss /= max(N, 1)
+                mse = nn.MSELoss(reduction='none')
+                for ii in range(args.num_models):
+                    for j in range(ii + 1, args.num_models):
+                        flg = (pred[ii] & pred[j]).type(torch.FloatTensor).to(device)
+                        grad_norm = torch.sum(mse(margin[ii], -margin[j]), dim=1)
+                        lhsloss += torch.sum(grad_norm * flg)
+                        N += torch.sum(flg)
 
-            loss = loss_std + args.lhs_weights * lhsloss - args.rhs_weights * rhsloss + args.beta * loss_stab + \
-                loss_consistency
+                lhsloss /= max(N.item(), 1)
 
-            if args.layer_type in ["curve", "line"] and args.beta_div and args.beta_div > 0:
-                loss += cosine_diversity(models, args)
+                loss = loss_std + args.lhs_weights * lhsloss - args.rhs_weights * rhsloss + args.beta * loss_stab + \
+                    loss_consistency
+
+                if args.layer_type in ["curve", "line"] and args.beta_div and args.beta_div > 0:
+                    loss += cosine_diversity(models, args)
 
             acc1, acc5 = accuracy(logits, targets, topk=(1, 5))
             losses.update(loss_std, batch_size)
@@ -198,8 +211,15 @@ def DRT_Trainer(
 
             # compute gradient and do SGD step
             optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            if args.amp:
+                scaler.scale(loss).backward()
+                optimizer.synchronize()
+                with optimizer.skip_synchronize():
+                    scaler.step(optimizer)
+                    scaler.update()
+            else:
+                loss.backward()
+                optimizer.step()
 
             grad_l2_norm.update(grad_l2(models, device))
             if isinstance(models, Subspace):
