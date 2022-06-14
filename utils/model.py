@@ -1,3 +1,7 @@
+import sys
+from collections import OrderedDict
+from typing import List
+
 import torch
 import torch.nn as nn
 import models
@@ -6,8 +10,8 @@ import os
 import math
 import numpy as np
 
-from models.ensemble import BezierCurve, Ensemble
-from models.layers import SubnetConv, SubnetLinear, SubspaceConv, CurvesConv, CurvesLinear, CurvesBN
+from models.ensemble import Subspace, Ensemble
+from models.layers import SubnetConv, SubnetLinear, CurvesConv, CurvesLinear, CurvesBN, LinesConv, LinesBN, LinesLinear
 
 
 # TODO: avoid freezing bn_params
@@ -49,6 +53,8 @@ def get_layers(layer_type):
         return SubnetConv, SubnetLinear, nn.BatchNorm2d
     elif layer_type == "curve":
         return CurvesConv, CurvesLinear, CurvesBN
+    elif layer_type == "line":
+        return LinesConv, LinesLinear, LinesBN
     else:
         raise ValueError("Incorrect layer type")
 
@@ -59,40 +65,40 @@ def create_model(args, gpu_list, device, logger):
 
     args.init_type = getattr(args, "init_type", "kaiming_normal")
     for _ in range(args.num_models):
-        if len(gpu_list) >= 1 and args.layer_type == "curve":
+        if args.layer_type in ["curve", "line"]:
             assert args.num_models == 3
-            print("Using multiple GPUs")
-            model = nn.parallel.DataParallel(
-                models.__dict__[args.arch](
-                    cl, ll, args.init_type, num_classes=args.num_classes,
-                    args=args, bn_layer=bn
-                ),
-                gpu_list,
-            ).to(device)
-        elif len(gpu_list) >= 1:
-            print("Using multiple GPUs")
-            model = nn.parallel.DataParallel(
-                models.__dict__[args.arch](
-                    cl, ll, args.init_type, num_classes=args.num_classes,
-                    args=args
-                ),
-                gpu_list,
-            ).to(device)
+            model = models.__dict__[args.arch](
+                    cl, ll, args.init_type, num_classes=args.num_classes, args=args, bn_layer=bn
+                )
+        # elif args.ddp or len(gpu_list) >= 1:
+        #     model = models.__dict__[args.arch](cl, ll, args.init_type, num_classes=args.num_classes, args=args)
         else:
             model = models.__dict__[args.arch](
                 cl, ll, args.init_type, num_classes=args.num_classes, args=args
             ).to(device)
 
-        logger.info(model)
+        if args.ddp:
+            import horovod.torch as hvd
+
+            device = 'cuda'
+            model = model.to(device)
+            is_ddp = (args.ddp and hvd.rank() == 0) or not args.ddp
+        else:
+            print("Using DataParallel")
+            model = nn.parallel.DataParallel(model, gpu_list).to(device)
+            is_ddp = True
+
+        if is_ddp and logger:
+            logger.info(model)
 
         # Customize models for training/pruning/fine-tuning
         prepare_model(model, args)
         ensemble_models.append(model)
-        if args.layer_type == "curve":
+        if args.layer_type in ["curve", "line"]:
             break
 
-    if args.layer_type == "curve":
-        ensemble_model = BezierCurve(*ensemble_models, is_layerwise=args.layerwise)
+    if args.layer_type in ["curve", "line"]:
+        ensemble_model = Subspace(*ensemble_models, is_layerwise=args.layerwise)
     else:
         ensemble_model = Ensemble(ensemble_models)
 
@@ -247,6 +253,73 @@ def subnet_to_dense(subnet_dict, p):
                     subnet_dict[k.replace("popup_scores", "weight")] * out
             )
     return dense
+
+
+@torch.no_grad()
+def subspace_to_subnet(model: Ensemble, subspace_dict: dict, alphas, subspace_type):
+    assert isinstance(model, Ensemble)
+    assert len(alphas) == len(model.models)
+    assert subspace_type in ["curve", "line"]
+
+    subnet_dict = OrderedDict()
+
+    for i, alpha in enumerate(alphas):
+        for k, _ in model.models[i].state_dict().items():
+            if "popup_scores" in k:
+                continue
+
+            print(f"Converting: {k}")
+
+            layer_type = k.split(".")[-2]
+            k_subspace = f"subspace_model.{k}"
+
+            if "conv" in layer_type and "weight" in k:
+                v1 = subspace_dict[k_subspace]
+                v2 = subspace_dict[f"{k_subspace.replace('.weight', '')}.conv1.weight"]
+                if subspace_type == "curve":
+                    v3 = subspace_dict[f"{k_subspace.replace('.weight', '')}.conv2.weight"]
+                    v = ((1 - alpha) ** 2) * v1 + 2 * alpha * (1 - alpha) * v2 + (alpha ** 2) * v3
+                else:
+                    v = ((1 - alpha) * v1 + alpha * v2).clone()
+            elif "fc" in layer_type and "weight" in k:
+                v1 = subspace_dict[k_subspace]
+                if subspace_type == "curve":
+                    v2 = subspace_dict[f"{k_subspace.replace('.weight', '')}.conv1.weight"]
+                    v3 = subspace_dict[f"{k_subspace.replace('.weight', '')}.conv2.weight"]
+                    v = ((1 - alpha) ** 2) * v1 + 2 * alpha * (1 - alpha) * v2 + (alpha ** 2) * v3
+                else:
+                    v2 = subspace_dict[f"{k_subspace.replace('.weight', '')}.linear1.weight"]
+                    v = ((1 - alpha) * v1 + alpha * v2).clone()
+            elif "bn" in layer_type and ("weight" in k or "bias" in k):
+                v1 = subspace_dict[k_subspace]
+                v2 = subspace_dict[f"{k_subspace}1"]
+                if subspace_type == "curve":
+                    v3 = subspace_dict[f"{k_subspace}2"]
+                    v = ((1 - alpha) ** 2) * v1 + 2 * alpha * (1 - alpha) * v2 + (alpha ** 2) * v3
+                else:
+                    v = ((1 - alpha) * v1 + alpha * v2).clone()
+            else:
+                v = subspace_dict[k_subspace].clone()
+            subnet_dict[f"models.{i}.{k}"] = v
+
+    missing_keys, unexpected_keys = model.load_state_dict(subnet_dict, strict=False)
+    print(f"Subspace converted!\nMissing keys {missing_keys}\n Unexpected keys {unexpected_keys}", file=sys.stderr)
+
+    return subnet_dict
+
+
+@torch.no_grad()
+def ckpt_combine(model: Ensemble, ckpt: List[dict]):
+    """
+        Combine multiple checkpoint file to an ensemble checkpoint
+    """
+    model_dict = OrderedDict()
+    for k, _ in model.state_dict().items():
+        if "pop" in k:
+            continue
+        _, i, *_ = k.split(".")
+        model_dict[k] = ckpt[int(i)]["state_dict"][k.replace(f"models.{i}.1", "1.module")]
+    return model_dict
 
 
 def dense_to_subnet(model, state_dict):
