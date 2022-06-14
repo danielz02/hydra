@@ -7,6 +7,7 @@ import time
 import numpy as np
 import torch
 import torch.nn as nn
+from torch.cuda.amp import GradScaler
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader
 
@@ -35,7 +36,7 @@ def get_minibatches(batch, num_batches):
 def DRT_Trainer(
         args, train_loader: DataLoader, sm_loader: DataLoader, models: Ensemble | Subspace, criterion,
         optimizer: Optimizer, epoch: int, noise_sd: float, attacker: Attacker, device: torch.device, writer=None,
-        train_sampler=None
+        train_sampler=None, scalar: GradScaler = None
 ):
     if args.ddp:
         import horovod.torch as hvd
@@ -108,26 +109,8 @@ def DRT_Trainer(
             if isinstance(models, Subspace) and args.sample_per_batch:
                 alphas = np.random.uniform(size=args.num_models)
 
-            if args.adv_training:
-                if isinstance(models, Subspace):
-                    raise NotImplementedError("SmoothAdv is not supported with self-ensemble!")
-                adv_x = []
-                for j in range(args.num_models):
-                    requires_grad_(models.models[j], False)
-                    models.models[j].eval()
-                    adv = attacker.attack(models.models[j], inputs, targets, noises=noises)
-                    models.models[j].train()
-                    requires_grad_(models.models[j], True)
-                    adv_x.append(adv)
-
-                adv_input = []
-                for j in range(args.num_models):
-                    noisy_input = torch.cat([adv_x[j] + noise for noise in noises], dim=0)
-                    noisy_input.requires_grad = True
-                    adv_input.append(noisy_input)
-            else:
-                noisy_input = torch.cat([inputs + noise for noise in noises], dim=0)
-                noisy_input.requires_grad = True
+            noisy_input = torch.cat([inputs + noise for noise in noises], dim=0)
+            noisy_input.requires_grad = True
 
             targets = targets.repeat(args.num_noise_vec)
             loss_std = torch.tensor(0., device=device)
@@ -137,10 +120,7 @@ def DRT_Trainer(
             if isinstance(models, Subspace):
                 for j in range(args.num_models):
                     models.fixed_alpha = alphas[j]
-                    if args.adv_training:
-                        logits = models(adv_input[j])
-                    else:
-                        logits = models(noisy_input)
+                    logits = models(noisy_input)
                     loss_std += criterion(logits, targets)
                     if args.drt_stab:
                         clean_input = torch.cat([inputs for _ in noises], dim=0)
@@ -150,10 +130,7 @@ def DRT_Trainer(
                         loss_consistency += consistency_loss(logits_chunk, lbd=args.lbd)
             else:
                 for j in range(args.num_models):
-                    if args.adv_training:
-                        logits = models.models[j](adv_input[j])
-                    else:
-                        logits = models.models[j](noisy_input)
+                    logits = models.models[j](noisy_input)
                     loss_std += criterion(logits, targets)
                     if args.drt_stab:
                         clean_input = torch.cat([inputs for _ in noises], dim=0)
@@ -166,10 +143,7 @@ def DRT_Trainer(
             pred = []
             margin = []
             for j in range(args.num_models):
-                if args.adv_training:
-                    cur_input = adv_input[j]
-                else:
-                    cur_input = noisy_input
+                cur_input = noisy_input
                 if isinstance(models, Subspace):
                     models.fixed_alpha = alphas[j]
                     output = models(cur_input)
