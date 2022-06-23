@@ -5,6 +5,7 @@ import torch
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader, SubsetRandomSampler
 
+
 # NOTE: Each dataset class must have public norm_layer, tr_train, tr_test objects.
 # These are needed for ood/semi-supervised dataset used alongwith in the training and eval.
 class SVHN:
@@ -12,12 +13,8 @@ class SVHN:
         SVHN dataset.
     """
 
-    def __init__(self, args, normalize=False):
+    def __init__(self, args):
         self.args = args
-
-        self.norm_layer = transforms.Normalize(
-            mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]
-        )
 
         self.tr_train = [
             transforms.RandomCrop(32, padding=4),
@@ -25,10 +22,6 @@ class SVHN:
             transforms.ToTensor(),
         ]
         self.tr_test = [transforms.ToTensor()]
-
-        if normalize:
-            self.tr_train.append(self.norm_layer)
-            self.tr_test.append(self.norm_layer)
 
         self.tr_train = transforms.Compose(self.tr_train)
         self.tr_test = transforms.Compose(self.tr_test)
@@ -41,14 +34,12 @@ class SVHN:
             transform=self.tr_train,
         )
 
-        subset_indices = np.random.permutation(np.arange(len(trainset)))[
-            : int(self.args.data_fraction * len(trainset))
-        ]
-
         train_loader = DataLoader(
             trainset,
+            shuffle=True,
+            num_workers=2,
+            pin_memory=True,
             batch_size=self.args.batch_size,
-            sampler=SubsetRandomSampler(subset_indices),
             **kwargs,
         )
         testset = datasets.SVHN(
@@ -58,7 +49,7 @@ class SVHN:
             transform=self.tr_test,
         )
         test_loader = DataLoader(
-            testset, batch_size=self.args.test_batch_size, shuffle=False, **kwargs
+            testset, batch_size=self.args.test_batch_size, pin_memory=True, shuffle=False, num_workers=2, **kwargs
         )
 
         print(

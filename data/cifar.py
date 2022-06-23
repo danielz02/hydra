@@ -48,7 +48,7 @@ class CIFAR10:
             # sampler=SubsetRandomSampler(subset_indices),
             shuffle=True,
             pin_memory=True,
-            num_workers=os.cpu_count(),
+            num_workers=4,
             **kwargs,
         )
         testset = datasets.CIFAR10(
@@ -58,8 +58,8 @@ class CIFAR10:
             transform=self.tr_test,
         )
         test_loader = DataLoader(
-            testset, batch_size=self.args.test_batch_size, shuffle=False, pin_memory=True, num_workers=os.cpu_count(),
-            **kwargs
+            testset, batch_size=self.args.test_batch_size, shuffle=False, pin_memory=True,
+            num_workers=4, **kwargs
         )
 
         print(
@@ -73,23 +73,16 @@ class CIFAR100:
         CIFAR-100 dataset.
     """
 
-    def __init__(self, args, normalize=False):
+    def __init__(self, args):
         self.args = args
-
-        self.norm_layer = transforms.Normalize(
-            mean=[0.507, 0.487, 0.441], std=[0.267, 0.256, 0.276]
-        )
 
         self.tr_train = [
             transforms.RandomCrop(32, padding=4),
             transforms.RandomHorizontalFlip(),
+            transforms.RandomRotation(15),
             transforms.ToTensor(),
         ]
         self.tr_test = [transforms.ToTensor()]
-
-        if normalize:
-            self.tr_train.append(self.norm_layer)
-            self.tr_test.append(self.norm_layer)
 
         self.tr_train = transforms.Compose(self.tr_train)
         self.tr_test = transforms.Compose(self.tr_test)
@@ -116,7 +109,7 @@ class CIFAR100:
             **kwargs,
         )
         testset = datasets.CIFAR10(
-            root=os.path.join(self.args.data_dir, "CIFAR10"),
+            root=os.path.join(self.args.data_dir, "CIFAR100"),
             train=False,
             download=True,
             transform=self.tr_test,
