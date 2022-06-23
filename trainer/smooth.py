@@ -9,22 +9,32 @@ from utils.logging import AverageMeter, ProgressMeter
 from utils.eval import accuracy
 
 # TODO: support sm_loader when len(sm_loader.dataset) < len(train_loader.dataset)
-from utils.utils_ensemble import get_stats, cosine_diversity
+from utils.utils_ensemble import get_stats, cosine_diversity, stability_loss, grad_l2
 
 
 def train(
-    model, device, train_loader, sm_loader, criterion, optimizer, epoch, args, writer
+    model, device, train_loader, sm_loader, criterion, optimizer, epoch, args, writer, train_sampler=None
 ):
-    print(" ->->->->->->->->->-> One epoch with Smooth Training <-<-<-<-<-<-<-<-<-<-")
+    if args.ddp:
+        import horovod.torch as hvd
+        train_sampler.set_epoch(epoch)
+        device = 'cuda'
+        is_rank0 = (args.ddp and hvd.rank() == 0) or not args.ddp
+    else:
+        is_rank0 = True
+
+    if is_rank0:
+        print(" ->->->->->->->->->-> One epoch with Smooth Training <-<-<-<-<-<-<-<-<-<-")
 
     batch_time = AverageMeter("Time", ":6.3f")
     data_time = AverageMeter("Data", ":6.3f")
     losses = AverageMeter("Loss", ":.4f")
     top1 = AverageMeter("Acc_1", ":6.2f")
     top5 = AverageMeter("Acc_5", ":6.2f")
-    monitored_params = [batch_time, data_time, losses, top1, top5]
+    grad_l2_norm = AverageMeter("grad_l2")
+    monitored_params = [batch_time, data_time, losses, grad_l2_norm, top1, top5]
 
-    if args.layer_type == "curve":
+    if args.layer_type in ["curve", "line"]:
         cosine = AverageMeter("Cosine", ":6.2f")
         l2 = AverageMeter("L2", ":6.2f")
         monitored_params.extend([cosine, l2])
@@ -50,7 +60,7 @@ def train(
             images, target = data[0].to(device), data[1].to(device)
 
         # basic properties of training
-        if i == 0:
+        if i == 0 and is_rank0:
             print(
                 images.shape,
                 target.shape,
@@ -65,32 +75,16 @@ def train(
             )
 
         # stability-loss
-        if args.dataset == "imagenet":
-            std = (
-                torch.tensor([0.229, 0.224, 0.225])
-                .unsqueeze(0)
-                .unsqueeze(-1)
-                .unsqueeze(-1)
-            ).to(device)
-            noise = (torch.randn_like(images) / std).to(device) * args.noise_std
-            output = model(images + noise)
-            loss = nn.CrossEntropyLoss()(output, target)
-        else:
-            output = model(images)
-            loss_natural = nn.CrossEntropyLoss()(output, target)
-            loss_robust = (1.0 / len(images)) * nn.KLDivLoss(size_average=False)(
-                F.log_softmax(
-                    model(
-                        images + torch.randn_like(images).to(device) * args.noise_std
-                    ),
-                    dim=1,
-                ),
-                F.softmax(output, dim=1),
-            )
-            loss = loss_natural + args.beta * loss_robust
+        output = model(images)
+        loss_natural = nn.CrossEntropyLoss()(output, target)
+        loss_robust = stability_loss(
+            model(images + torch.randn_like(images).to(device) * args.noise_std),
+            output
+        )
+        loss = loss_natural + args.beta * loss_robust
 
         # Diversity regularization for self-ensemble
-        if args.layer_type == "curve" and args.beta_div and args.beta_div > 0:
+        if args.layer_type in ["curve", "line"] and args.beta_div and args.beta_div > 0:
             loss += cosine_diversity(model, args)
 
         # measure accuracy and record loss
@@ -99,7 +93,7 @@ def train(
         top1.update(acc1[0], images.size(0))
         top5.update(acc5[0], images.size(0))
 
-        if args.layer_type == "curve":
+        if args.layer_type in ["curve", "line"]:
             weight_cosine, weight_l2 = get_stats(model, args)
             cosine.update(weight_cosine, images.size(0))
             l2.update(weight_l2, images.size(0))
@@ -112,15 +106,19 @@ def train(
         batch_time.update(time.time() - end)
         end = time.time()
 
-        if i % args.print_freq == 0:
+        grad_l2_norm.update(grad_l2(model, device))
+
+        if i % args.print_freq == 0 and is_rank0:
             progress.display(i)
-            progress.write_to_tensorboard(
-                writer, "train", epoch * len(train_loader) + i
-            )
 
         # write a sample of training images to tensorboard (helpful for debugging)
-        if i == 0:
+        if i == 0 and writer:
             writer.add_image(
                 "training-images",
                 torchvision.utils.make_grid(images[0: len(images) // 4]),
             )
+
+    if is_rank0:
+        progress.write_to_tensorboard(
+            writer, "train", epoch
+        )

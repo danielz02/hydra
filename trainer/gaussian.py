@@ -5,18 +5,27 @@ import torchvision
 import torch.nn as nn
 
 from utils.eval import accuracy
-from models.ensemble import Ensemble, BezierCurve
+from models.ensemble import Ensemble, Subspace
 from utils.logging import AverageMeter, ProgressMeter
-
 
 # TODO: support sm_loader when len(sm_loader.dataset) < len(train_loader.dataset)
 from utils.utils_ensemble import cosine_diversity, get_stats
 
 
 def train(
-    model, device, train_loader, sm_loader, criterion, optimizer, epoch, args, writer
+        model, device, train_loader, sm_loader, criterion, optimizer, epoch, args, writer, train_sampler=None
 ):
-    print(" ->->->->->->->->->-> One epoch with Gaussian Smoothing <-<-<-<-<-<-<-<-<-<-")
+    if args.ddp:
+        import horovod.torch as hvd
+
+        train_sampler.set_epoch(epoch)
+        device = 'cuda'
+        is_rank0 = (args.ddp and hvd.rank() == 0) or not args.ddp
+    else:
+        is_rank0 = True
+
+    if is_rank0:
+        print(" ->->->->->->->->->-> One epoch with Gaussian Smoothing <-<-<-<-<-<-<-<-<-<-")
 
     batch_time = AverageMeter("Time", ":6.3f")
     data_time = AverageMeter("Data", ":6.3f")
@@ -50,7 +59,7 @@ def train(
             images, target = data[0].to(device), data[1].to(device)
 
         # basic properties of training
-        if i == 0:
+        if i == 0 and is_rank0:
             print(
                 images.shape,
                 target.shape,
@@ -64,18 +73,8 @@ def train(
                 )
             )
 
-        # stability-loss
-        if args.dataset == "imagenet":
-            std = (
-                torch.tensor([0.229, 0.224, 0.225])
-                .unsqueeze(0)
-                .unsqueeze(-1)
-                .unsqueeze(-1)
-            ).to(device)
-        else:
-            std = 1
-        noise = (torch.randn_like(images) / std).to(device) * args.noise_std
-        if isinstance(model, Ensemble) and not isinstance(model, BezierCurve):
+        noise = torch.randn_like(images, device=device) * args.noise_std
+        if isinstance(model, Ensemble) and not isinstance(model, Subspace):
             loss = []
             output_ensemble = 0
             for m in model.models:
@@ -87,7 +86,7 @@ def train(
             output = model(images + noise)
             loss = nn.CrossEntropyLoss()(output, target)
 
-        if args.layer_type == "curve" and args.beta_div and args.beta_div > 0:
+        if args.layer_type in ["curve", "line"] and args.beta_div and args.beta_div > 0:
             loss += cosine_diversity(model, args)
 
         optimizer.zero_grad()
@@ -101,25 +100,27 @@ def train(
 
         # measure accuracy and record loss
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
-        weight_cosine, weight_l2 = get_stats(model, args)
+        if args.layer_type in ["line", "curve"]:
+            weight_cosine, weight_l2 = get_stats(model, args)
+            cosine.update(weight_cosine, images.size(0))
+            l2.update(weight_l2, images.size(0))
+
         losses.update(loss.item(), images.size(0))
         top1.update(acc1[0], images.size(0))
         top5.update(acc5[0], images.size(0))
-        cosine.update(weight_cosine, images.size(0))
-        l2.update(weight_l2, images.size(0))
 
         # measure elapsed time
         batch_time.update(time.time() - end)
         end = time.time()
 
-        if i % args.print_freq == 0:
+        if i % args.print_freq == 0 and is_rank0:
             progress.display(i)
             progress.write_to_tensorboard(
                 writer, "train", epoch * len(train_loader) + i
             )
 
         # write a sample of training images to tensorboard (helpful for debugging)
-        if i == 0:
+        if i == 0 and is_rank0:
             writer.add_image(
                 "training-images",
                 torchvision.utils.make_grid(images[0: len(images) // 4]),
