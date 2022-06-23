@@ -1,9 +1,9 @@
 import torch
-import shutil
 import os
 import yaml
 import sys
-import shutil, errno
+import shutil
+import numpy as np
 from distutils.dir_util import copy_tree
 from utils.model import subnet_to_dense
 
@@ -104,10 +104,40 @@ class AverageMeter(object):
         self.count = 0
 
     def update(self, val, n=1):
+        if isinstance(val, torch.Tensor):
+            val = val.cpu().item()
+        if np.isnan(val) or np.isinf(val):
+            return
         self.val = val
         self.sum += val * n
         self.count += n
         self.avg = self.sum / self.count
+
+    def __str__(self):
+        fmtstr = "{name} {val" + self.fmt + "} ({avg" + self.fmt + "})"
+        return fmtstr.format(**self.__dict__)
+
+
+class DistributedMeter(object):
+    def __init__(self, name, fmt=":f"):
+        self.name = name
+        self.sum = torch.tensor(0.)
+        self.count = torch.tensor(0.)
+        self.fmt = fmt
+
+        self.val = 0
+        self.avg = 0
+
+        import horovod.torch as hvd
+        self.hvd = hvd
+
+    def update(self, val, n=1):
+        n_reduce = self.hvd.allreduce(torch.tensor(n))
+        val_reduce = self.hvd.allreduce(val.detach().cpu(), name=self.name)
+        self.sum += val_reduce * n_reduce
+        self.count += n_reduce
+        self.val = val_reduce.item()
+        self.avg = (self.sum / self.count).item()
 
     def __str__(self):
         fmtstr = "{name} {val" + self.fmt + "} ({avg" + self.fmt + "})"

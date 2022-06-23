@@ -111,6 +111,12 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--semisup-name",
+        type=str,
+        help="Path for semi-supervision dataset",
+    )
+
+    parser.add_argument(
         "--semisup-fraction",
         type=float,
         default=0.25,
@@ -142,7 +148,7 @@ def parse_args():
     parser.add_argument(
         "--dataset",
         type=str,
-        choices=("CIFAR10", "CIFAR100", "SVHN", "MNIST", "imagenet"),
+        choices=("CIFAR10", "CIFAR100", "SVHN", "MNIST", "imagenet", "TinyImageNet"),
         help="Dataset for training and eval",
     )
     parser.add_argument(
@@ -210,7 +216,7 @@ def parse_args():
     )
     parser.add_argument("--momentum", type=float, default=0.9, help="SGD momentum")
     parser.add_argument(
-        "--warmup-epochs", type=int, default=0, help="Number of warmup epochs"
+        "--warmup-epochs", type=int, default=-1, help="Number of warmup epochs"
     )
     parser.add_argument(
         "--warmup-lr", type=float, default=0.1, help="warmup learning rate"
@@ -339,6 +345,7 @@ def parse_args():
     parser.add_argument('--trades-loss', action='store_true')
     parser.add_argument('--adv-training', action='store_true')
     parser.add_argument('--drt-stab', action='store_true', help="add STAB to DRT")
+    parser.add_argument('--separate-semisup', action='store_true', help="Apply DRT to labeled data only")
     parser.add_argument('--num-noise-vec', default=2, type=int, help="number of noise vectors. `m` in the paper.")
 
     # Consistency Loss
@@ -364,6 +371,15 @@ def parse_args():
     parser.add_argument("--layerwise", action="store_true", help="Flag for enable layer-wise subspace sampling")
     parser.add_argument("--beta-div", type=float, help="Weight of cosine diversity regularization term")
     parser.add_argument("--sample-per-batch", action="store_true")
+    parser.add_argument("--subnet-to-subspace", action="store_true")
+    parser.add_argument("--subspace-type", type=str, help="Type of subspace to convert from")
+
+    # DDP
+    parser.add_argument("--ddp", action="store_true", help="Enable distributed training")
+    parser.add_argument('--gradient-predivide-factor', type=float, default=1.0,
+                        help='apply gradient predivide factor in optimizer (default: 1.0)')
+    parser.add_argument("--fp16-allreduce", action="store_true", help="Enable mixed precision training")
+    parser.add_argument("--amp", action="store_true", help="Enable automated mixed precision training")
 
     args = parser.parse_args()
     args.epsilon = args.epsilon / 255 if args.epsilon > 1 else args.epsilon
@@ -372,6 +388,8 @@ def parse_args():
         assert args.layer_type in ["curve", "line"]
     if args.drt_consistency:
         assert args.lbd
+    if args.separate_semisup:
+        assert args.is_semisup
 
     assert not (args.drt_consistency and args.drt_stab)
 

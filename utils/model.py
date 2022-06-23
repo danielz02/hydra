@@ -83,9 +83,12 @@ def create_model(args, gpu_list, device, logger):
             device = 'cuda'
             model = model.to(device)
             is_ddp = (args.ddp and hvd.rank() == 0) or not args.ddp
-        else:
+        elif len(gpu_list) > 1:
             print("Using DataParallel")
             model = nn.parallel.DataParallel(model, gpu_list).to(device)
+            is_ddp = True
+        else:
+            print("No Parallel")
             is_ddp = True
 
         if is_ddp and logger:
@@ -320,6 +323,20 @@ def ckpt_combine(model: Ensemble, ckpt: List[dict]):
         _, i, *_ = k.split(".")
         model_dict[k] = ckpt[int(i)]["state_dict"][k.replace(f"models.{i}.1", "1.module")]
     return model_dict
+
+
+@torch.no_grad()
+def dense_to_sparse(model: Ensemble):
+    """
+        Convert dense model to sparse model
+    """
+    for name, module in model.named_modules():
+        if isinstance(module, nn.Conv2d) or isinstance(module, nn.Linear):
+            if hasattr(module, "weight") and module.weight is not None:
+                module.weight = torch.nn.Parameter(module.weight.data.to_sparse())
+            if hasattr(module, "bias") and module.bias is not None:
+                module.bias = torch.nn.Parameter(module.bias.data.to_sparse())
+    return model
 
 
 def dense_to_subnet(model, state_dict):
