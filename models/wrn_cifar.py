@@ -1,13 +1,13 @@
 import math
+from argparse import Namespace
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from models.ensemble import BezierCurve
-from models.layers import CurvesConv, LinesConv, CurvesLinear, CurvesBN
+from models.ensemble import Subspace, Ensemble
+from models.layers import CurvesConv, LinesConv, CurvesLinear, CurvesBN, LinesLinear, LinesBN, SubnetConv, SubnetLinear
 from utils.datasets import get_normalize_layer
-from utils.model import set_prune_rate_model
 
 
 class BasicBlock(nn.Module):
@@ -140,7 +140,7 @@ class WideResNet(nn.Module):
         out = self.block3(out)
         out = self.relu(self.bn1(out))
         out = F.avg_pool2d(out, 8)
-        if not isinstance(self.conv1, CurvesConv) and not isinstance(self.conv1, LinesConv):
+        if not isinstance(self.conv1, CurvesConv):
             out = out.view(-1, self.nChannels)
 
         return self.fc(out).reshape(-1, self.num_classes)
@@ -179,7 +179,16 @@ def wrn_40_2(conv_layer, linear_layer, init_type, args, **kwargs):
 
 
 if __name__ == "__main__":
-    wrn = BezierCurve(wrn_28_10(CurvesConv, CurvesLinear, "kaiming_normal", None, bn_layer=CurvesBN), False)
-    set_prune_rate_model(wrn, 1)
+    argv = Namespace()
+    argv.normalize = False
+    wrn = Ensemble([
+        wrn_28_4(SubnetConv, SubnetLinear, "kaiming_normal", argv),
+        wrn_28_4(SubnetConv, SubnetLinear, "kaiming_normal", argv),
+        wrn_28_4(SubnetConv, SubnetLinear, "kaiming_normal", argv)
+    ])
     t = torch.randn(16, 3, 32, 32)
     wrn(t)
+    print(wrn.state_dict().keys())
+
+    wrn_subspace = Subspace(wrn_28_4(LinesConv, LinesLinear, "kaiming_normal", argv, bn_layer=LinesBN), False)
+    print(wrn_subspace.state_dict().keys())
