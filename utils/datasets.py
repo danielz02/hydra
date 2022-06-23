@@ -15,17 +15,7 @@ DATASET_LOC = './data'
 
 os.environ[IMAGENET_LOC_ENV] = DATASET_LOC
 # list of all datasets
-DATASETS = ["imagenet", "cifar10", "mnist"]
-
-
-def get_dataset(dataset: str, split: str) -> Dataset:
-    """Return the dataset as a PyTorch Dataset object"""
-    if dataset == "imagenet":
-        return _imagenet(split)
-    elif dataset == "cifar10":
-        return _cifar10(split)
-    elif dataset == "mnist":
-        return _mnist(split)
+DATASETS = ["imagenet", "cifar10", "mnist", "tinyimagenet", "cifar100"]
 
 
 def get_num_classes(dataset: str):
@@ -40,10 +30,12 @@ def get_num_classes(dataset: str):
 
 def get_normalize_layer(dataset: str) -> torch.nn.Module:
     """Return the dataset's normalization layer"""
-    if dataset.lower() == "imagenet":
+    if dataset.lower() in ["imagenet", "tinyimagenet"]:
         return NormalizeLayer(_IMAGENET_MEAN, _IMAGENET_STDDEV)
     elif dataset.lower() == "cifar10":
         return NormalizeLayer(_CIFAR10_MEAN, _CIFAR10_STDDEV)
+    elif dataset.lower() == "cifar100":
+        return NormalizeLayer(_CIFAR100_MEAN, _CIFAR100_STD)
     elif dataset.lower() == "mnist":
         return NormalizeLayer(_MNIST_MEAN, _MNIST_STDDEV)
 
@@ -54,52 +46,11 @@ _IMAGENET_STDDEV = [0.229, 0.224, 0.225]
 _CIFAR10_MEAN = [0.4914, 0.4822, 0.4465]
 _CIFAR10_STDDEV = [0.2023, 0.1994, 0.2010]
 
+_CIFAR100_MEAN = [0.507, 0.487, 0.441]
+_CIFAR100_STD = [0.267, 0.256, 0.276]
+
 _MNIST_MEAN = [0.5, ]
 _MNIST_STDDEV = [0.5, ]
-
-
-def _mnist(split: str) -> Dataset:
-    if split == "train":
-        return datasets.MNIST(DATASET_LOC, train=True, download=True, transform=transforms.Compose([
-            transforms.RandomCrop(28),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor()
-        ]))
-    elif split == "test":
-        return datasets.MNIST(DATASET_LOC, train=False, transform=transforms.ToTensor())
-
-
-def _cifar10(split: str) -> Dataset:
-    if split == "train":
-        return datasets.CIFAR10(DATASET_LOC, train=True, download=True, transform=transforms.Compose([
-            transforms.RandomCrop(32, padding=4),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor()
-        ]))
-    elif split == "test":
-        return datasets.CIFAR10(DATASET_LOC, train=False, download=True, transform=transforms.ToTensor())
-
-
-def _imagenet(split: str) -> Dataset:
-    if not IMAGENET_LOC_ENV in os.environ:
-        raise RuntimeError("environment variable for ImageNet directory not set")
-
-    dir = os.environ[IMAGENET_LOC_ENV]
-    if split == "train":
-        subdir = os.path.join(dir, "train")
-        transform = transforms.Compose([
-            transforms.RandomSizedCrop(224),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor()
-        ])
-    elif split == "test":
-        subdir = os.path.join(dir, "val")
-        transform = transforms.Compose([
-            transforms.Scale(256),
-            transforms.CenterCrop(224),
-            transforms.ToTensor()
-        ])
-    return datasets.ImageFolder(subdir, transform)
 
 
 class NormalizeLayer(torch.nn.Module):

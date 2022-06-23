@@ -4,7 +4,7 @@ import torch.nn as nn
 
 import numpy as np
 
-from models.ensemble import Ensemble, BezierCurve
+from models.ensemble import Ensemble, Subspace
 
 
 def get_lr_policy(lr_schedule):
@@ -20,15 +20,24 @@ def get_lr_policy(lr_schedule):
 
 
 def get_optimizer(model, args):
-    if isinstance(model, Ensemble) and not isinstance(model, BezierCurve):
+    if isinstance(model, Ensemble) and not isinstance(model, Subspace):
         param = list(model.models[0].parameters())
         for i in range(1, args.num_models):
             param.extend(list(model.models[i].parameters()))
-    elif isinstance(model, BezierCurve):
+    elif isinstance(model, Subspace):
         param = model.subspace_model.parameters()
     else:
         param = model.parameters()
     param = filter(lambda x: x.requires_grad, param)
+
+    # if args.ddp:
+    #     import horovod.torch as hvd
+    #     lr_scaler = hvd.size()
+    #     print(f"Scaling learning rate by {lr_scaler}")
+    # else:
+    #     lr_scaler = 1
+    #
+    # args.lr *= lr_scaler
 
     if args.optimizer == "sgd":
         optim = torch.optim.SGD(
@@ -49,6 +58,7 @@ def get_optimizer(model, args):
     else:
         print(f"{args.optimizer} is not supported.")
         sys.exit(0)
+
     return optim
 
 
@@ -86,8 +96,7 @@ def step_schedule(optimizer, args):
             a = args.warmup_lr
         else:
             epoch = epoch - args.warmup_epochs
-
-        a = lr * (0.1 ** (epoch // args.lr_step))
+            a = lr * (0.1 ** (epoch // args.lr_step))
 
         new_lr(optimizer, a)
 

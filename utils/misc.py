@@ -15,7 +15,7 @@ class CustomDatasetFromNumpy(Dataset):
         img_tensor = transforms.ToPILImage()(self.img[index])
         img_tensor = self.transform(img_tensor)
         label_tensor = self.label[index]
-        return (img_tensor, label_tensor)
+        return img_tensor, label_tensor
 
     def __len__(self):
         return self.len
