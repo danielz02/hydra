@@ -66,13 +66,15 @@ class imagenet:
                 trainset, num_replicas=hvd.size(), rank=hvd.rank()
             )
             test_sampler = torch.utils.data.distributed.DistributedSampler(
-                testset, num_replicas=hvd.size(), rank=hvd.rank()
+                testset, num_replicas=hvd.size(), rank=hvd.rank(), shuffle=False
             )
             train_loader = torch.utils.data.DataLoader(
-                trainset, batch_size=self.args.batch_size, sampler=train_sampler, persistent_workers=True, timeout=60, **kwargs
+                trainset, batch_size=self.args.batch_size, sampler=train_sampler, persistent_workers=True, timeout=60,
+                **kwargs
             )
             test_loader = torch.utils.data.DataLoader(
-                testset, batch_size=self.args.test_batch_size, sampler=test_sampler, persistent_workers=True, timeout=60, **kwargs
+                testset, batch_size=self.args.test_batch_size, sampler=test_sampler, persistent_workers=True,
+                timeout=60, **kwargs
             )
             self.train_sampler = train_sampler
         else:
