@@ -81,17 +81,27 @@ if __name__ == "__main__":
     ])
     sm_loader = get_semisup_dataloader(args, trans)
 
+    margins = []
     pseudo_labels = []
+    softmax = torch.nn.Softmax(1)
     with torch.no_grad():
         for img, _ in tqdm(sm_loader):
+            y_pred = []
+            margin = []
             img = img.to(device)
-            y_pred = base_classifier(img + torch.randn_like(img) * args.noise_std).argmax(axis=1)
+            for m in base_classifier.models:
+                logits = m(img)
+                prob, _ = softmax(logits).sort()
+                y_pred.append(logits.argmax(axis=1).detach().cpu().numpy())
+                margin.append((prob[:, -1] - prob[:, -2]).detach().cpu().numpy())
+
+            margins.append(margin)
             pseudo_labels.append(y_pred)
-    pseudo_labels = torch.cat(pseudo_labels).cpu().numpy()
-    
+
     with open("datasets/tiny_images/ti_top_50000_pred_v3.1.pickle", "rb") as src:
         pkl = pickle.load(src)
 
+    pkl["margins"] = margins
     pkl["extrapolated_targets"] = pseudo_labels
     pkl["prediction_model"] = args.base_classifier
     pkl["prediction_model_epoch"] = 150
