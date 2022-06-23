@@ -21,8 +21,8 @@ class Ensemble(nn.Module):
             return self.models[0](x)
 
 
-class BezierCurve(nn.Module):
-    def __init__(self, subspace_model, is_layerwise: bool):
+class Subspace(nn.Module):
+    def __init__(self, subspace_model: nn.Module, is_layerwise: bool):
         super().__init__()
 
         self.layerwise = is_layerwise
@@ -37,7 +37,7 @@ class BezierCurve(nn.Module):
 
         alpha = np.random.uniform(0, 1) if not fix_alpha else fix_alpha
         for m in self.subspace_model.modules():
-            if isinstance(m, nn.Conv2d) or isinstance(m, nn.BatchNorm2d):
+            if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear) or isinstance(m, nn.BatchNorm2d):
                 setattr(m, f"alpha", alpha)
             if self.layerwise:
                 alpha = np.random.uniform(0, 1) if not fix_alpha else fix_alpha
@@ -50,10 +50,12 @@ class BezierCurve(nn.Module):
 class SubspaceEnsemble(Ensemble):
     def __init__(self, subspace, num_models=3):
         super().__init__([subspace] * num_models)
-        self.alpha = np.random.uniform(size=num_models)
+        self.subspace = subspace
         self.num_models = num_models
+        self.alpha = np.random.uniform(size=num_models)
 
         assert len(self.models) == len(self.alpha)
+        assert id(self.subspace) == id(self.models[0])
 
     def reset_alpha(self):
         self.alpha = np.random.uniform(size=self.num_models)
@@ -61,10 +63,11 @@ class SubspaceEnsemble(Ensemble):
     def forward(self, x):
         if len(self.models) > 1:
             outputs = 0
-            for alpha, model in zip(self.alpha, self.models):
-                model.fixed_alpha = alpha
-                outputs += model(x)
-            output = outputs / len(self.models)
+            for alpha in self.alpha:
+                self.subspace.fixed_alpha = alpha
+                outputs += self.subspace(x)
+            output = outputs / len(self.alpha)
             return output
         else:
+            self.models[0].fixed_alpha = self.alpha[0]
             return self.models[0](x)
