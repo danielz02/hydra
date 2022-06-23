@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.autograd as autograd
+from torch.cuda.amp import custom_fwd, custom_bwd
 from torch.nn.parameter import Parameter
 import torch.nn.functional as F
 import math
@@ -9,6 +10,7 @@ import math
 # https://github.com/allenai/hidden-networks
 class GetSubnet(autograd.Function):
     @staticmethod
+    @custom_fwd
     def forward(ctx, scores, k):
         # Get the subnetwork by sorting the scores and using the top k%
         out = scores.clone()
@@ -23,6 +25,7 @@ class GetSubnet(autograd.Function):
         return out
 
     @staticmethod
+    @custom_bwd
     def backward(ctx, g):
         # send the gradient g straight-through on the backward pass.
         return g, None
@@ -134,6 +137,14 @@ class SubspaceConv(SubnetConv):
         return x
 
 
+class SubspaceLinear(SubnetLinear):
+    def forward(self, x):
+        # call get_weight, which samples from the subspace, then use the corresponding weight.
+        w = self.get_weight()
+        x = F.linear(x, w, self.bias)
+        return x
+
+
 class SubspaceBN(nn.BatchNorm2d):
     def forward(self, input):
         # call get_weight, which samples from the subspace, then use the corresponding weight.
@@ -189,6 +200,17 @@ class TwoParamConv(SubspaceConv):
         initialize_fn(self.conv1.weight)
 
 
+class TwoParamLinear(SubspaceLinear):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        kwargs["bias"] = False
+        self.linear1 = SubnetLinear(*args, **kwargs)
+
+    @torch.no_grad()
+    def initialize(self, initialize_fn):
+        initialize_fn(self.linear1.weight)
+
+
 class ThreeParamConv(SubspaceConv):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -231,7 +253,16 @@ class LinesConv(TwoParamConv):
         super().__init__(*args, **kwargs)
 
     def get_weight(self):
-        w = (1 - self.alpha) * self.weight + self.alpha * self.weight1
+        w = (1 - self.alpha) * self._get_weight() + self.alpha * self.conv1._get_weight()
+        return w
+
+
+class LinesLinear(TwoParamLinear):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def get_weight(self):
+        w = (1 - self.alpha) * self._get_weight() + self.alpha * self.linear1._get_weight()
         return w
 
 
@@ -281,9 +312,9 @@ class CurvesBN(ThreeParamBN):
     def get_weight(self):
         if getattr(self, "w0", False):
             w = self.weight, b = self.bias
-        elif getattr(self, "w0", False):
+        elif getattr(self, "w1", False):
             w = self.weight1, b = self.bias1
-        elif getattr(self, "w0", False):
+        elif getattr(self, "w2", False):
             w = self.weight2, b = self.bias2
         else:
             w = (
@@ -297,3 +328,8 @@ class CurvesBN(ThreeParamBN):
                 + (self.alpha ** 2) * self.bias1
             )
         return w, b
+
+
+if __name__ == "__main__":
+    m = LinesLinear(in_features=3, out_features=3)
+    print(isinstance(m, nn.Conv2d))
