@@ -6,7 +6,7 @@ from math import ceil
 from statsmodels.stats.proportion import proportion_confint
 from torch import nn
 
-from models.ensemble import Ensemble, BezierCurve
+from models.ensemble import Ensemble, Subspace
 
 
 def eval_quick_smoothing(model, loader, device, sigma=0.25, nbatch=10):
@@ -168,7 +168,7 @@ class Smooth(object):
         :param x: the input [channel x width x height]
         :param num: number of samples to collect
         :param batch_size:
-        :return: an ndarray[int] of length num_classes containing the per-class counts
+        :return: a ndarray[int] of length num_classes containing the per-class counts
         """
         with torch.no_grad():
             counts = np.zeros(self.num_classes, dtype=int)
@@ -179,7 +179,7 @@ class Smooth(object):
                 batch = x.repeat((this_batch_size, 1, 1, 1))
                 noise = torch.randn_like(batch, device=device) * self.sigma
                 noisy_input = batch + noise
-                if isinstance(self.base_classifier, Ensemble) and not isinstance(self.base_classifier, BezierCurve):
+                if isinstance(self.base_classifier, Ensemble) and not isinstance(self.base_classifier, Subspace):
                     softmax = nn.Softmax(1)
                     feature = 0
                     for m in self.base_classifier.models:

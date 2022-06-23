@@ -31,39 +31,46 @@ class SmoothAdv_PGD(Attacker):
                  steps: int,
                  random_start: bool = True,
                  max_norm: Optional[float] = None,
-                 device: torch.device = torch.device('cpu')) -> None:
+                 device: torch.device = torch.device('cpu'),
+                 model=None) -> None:
         super(SmoothAdv_PGD, self).__init__()
         self.steps = steps
         self.random_start = random_start
         self.max_norm = max_norm
         self.device = device
+        self.model = model
 
-    def attack(self, model, inputs, labels, noises=None):
+    def attack(self, model, inputs, labels, noises=None, noise_std=0.25):
         """
-		Performs SmoothAdv PGD L2 attack of the model for the inputs and labels.
+        Performs SmoothAdv PGD L2 attack of the model for the inputs and labels.
 
-		Parameters
-		----------
-		model : nn.Module
-			Model to attack.
-		inputs : torch.Tensor
-			Batch of samples to attack. Values should be in the [0, 1] range.
-		labels : torch.Tensor
-			Labels of the samples to attack.
-		noises : List[torch.Tensor]
-			Lists of noise samples to attack.
+        Parameters
+        ----------
+        model : nn.Module
+            Model to attack.
+        inputs : torch.Tensor
+            Batch of samples to attack. Values should be in the [0, 1] range.
+        labels : torch.Tensor
+            Labels of the samples to attack.
+        noises : List[torch.Tensor]
+            Lists of noise samples to attack.
+        noise_std: float
 
-		Returns
-		-------
-		torch.Tensor
-			Batch of samples modified to be adversarial to the model.
+        Returns
+        -------
+        torch.Tensor
+            Batch of samples modified to be adversarial to the model.
 
-		"""
-        if inputs.min() < 0 or inputs.max() > 1: raise ValueError('Input values should be in the [0, 1] range.')
+        """
+        if inputs.min() < 0 or inputs.max() > 1:
+            raise ValueError('Input values should be in the [0, 1] range.')
 
         def _batch_l2norm(x):
             x_flat = x.reshape(x.size(0), -1)
             return torch.norm(x_flat, dim=1)
+
+        if noises is None:
+            noises = [torch.randn_like(inputs) * noise_std]
 
         adv = inputs.detach()
         alpha = self.max_norm / self.steps * 2
@@ -89,6 +96,12 @@ class SmoothAdv_PGD(Attacker):
             adv = adv.detach()
 
         return adv
+
+    def predict(self, inputc):
+        return self.model(inputc)
+
+    def perturb(self, x, y):
+        return self.attack(self.model, x, y)
 
 
 # Modification of the code from https://github.com/jeromerony/fast_adversarial
@@ -210,7 +223,8 @@ class PGD_L2(Attacker):
             Batch of samples modified to be adversarial to the model.
 
         """
-        if inputs.min() < 0 or inputs.max() > 1: raise ValueError('Input values should be in the [0, 1] range.')
+        if inputs.min() < 0 or inputs.max() > 1:
+            raise ValueError('Input values should be in the [0, 1] range.')
         batch_size = labels.shape[0]
         multiplier = 1 if targeted else -1
         delta = torch.zeros((len(labels), *inputs.shape[1:]), requires_grad=True, device=self.device)
