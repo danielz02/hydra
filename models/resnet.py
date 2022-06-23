@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 
+from utils.datasets import get_normalize_layer
+
 
 def conv3x3(in_planes, out_planes, conv_layer, stride=1, groups=1, dilation=1):
     """3x3 convolution with padding"""
@@ -18,20 +20,20 @@ class BasicBlock(nn.Module):
     __constants__ = ['downsample']
 
     def __init__(self, inplanes, planes, conv_layer, stride=1, downsample=None, groups=1,
-                 base_width=64, dilation=1, norm_layer=None):
+                 base_width=64, dilation=1, bn_layer=None):
         super(BasicBlock, self).__init__()
-        if norm_layer is None:
-            norm_layer = nn.BatchNorm2d
+        if bn_layer is None:
+            bn_layer = nn.BatchNorm2d
         if groups != 1 or base_width != 64:
             raise ValueError('BasicBlock only supports groups=1 and base_width=64')
         if dilation > 1:
             raise NotImplementedError("Dilation > 1 not supported in BasicBlock")
         # Both self.conv1 and self.downsample layers downsample the input when stride != 1
         self.conv1 = conv3x3(inplanes, planes, conv_layer, stride)
-        self.bn1 = norm_layer(planes)
+        self.bn1 = bn_layer(planes)
         self.relu = nn.ReLU(inplace=True)
         self.conv2 = conv3x3(planes, planes, conv_layer)
-        self.bn2 = norm_layer(planes)
+        self.bn2 = bn_layer(planes)
         self.downsample = downsample
         self.stride = stride
 
@@ -59,18 +61,18 @@ class Bottleneck(nn.Module):
     __constants__ = ['downsample']
 
     def __init__(self, inplanes, planes, conv_layer, stride=1, downsample=None, groups=1,
-                 base_width=64, dilation=1, norm_layer=None):
+                 base_width=64, dilation=1, bn_layer=None):
         super(Bottleneck, self).__init__()
-        if norm_layer is None:
-            norm_layer = nn.BatchNorm2d
+        if bn_layer is None:
+            bn_layer = nn.BatchNorm2d
         width = int(planes * (base_width / 64.)) * groups
         # Both self.conv2 and self.downsample layers downsample the input when stride != 1
         self.conv1 = conv1x1(inplanes, width, conv_layer)
-        self.bn1 = norm_layer(width)
+        self.bn1 = bn_layer(width)
         self.conv2 = conv3x3(width, width, conv_layer, stride, groups, dilation)
-        self.bn2 = norm_layer(width)
+        self.bn2 = bn_layer(width)
         self.conv3 = conv1x1(width, planes * self.expansion, conv_layer)
-        self.bn3 = norm_layer(planes * self.expansion)
+        self.bn3 = bn_layer(planes * self.expansion)
         self.relu = nn.ReLU(inplace=True)
         self.downsample = downsample
         self.stride = stride
@@ -100,11 +102,11 @@ class Bottleneck(nn.Module):
 class ResNet(nn.Module):
     def __init__(self, conv_layer, linear_layer, block, layers, num_classes=1000, zero_init_residual=False,
                  groups=1, width_per_group=64, replace_stride_with_dilation=None,
-                 norm_layer=None):
+                 bn_layer=None):
         super(ResNet, self).__init__()
-        if norm_layer is None:
-            norm_layer = nn.BatchNorm2d
-        self._norm_layer = norm_layer
+        if bn_layer is None:
+            bn_layer = nn.BatchNorm2d
+        self._norm_layer = bn_layer
         self.conv_layer = conv_layer
 
         self.inplanes = 64
@@ -120,7 +122,7 @@ class ResNet(nn.Module):
         self.base_width = width_per_group
 
         self.conv1 = conv_layer(3, self.inplanes, kernel_size=7, stride=2, padding=3, bias=False)
-        self.bn1 = norm_layer(self.inplanes)
+        self.bn1 = bn_layer(self.inplanes)
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64, layers[0])
@@ -169,7 +171,7 @@ class ResNet(nn.Module):
         for _ in range(1, blocks):
             layers.append(block(self.inplanes, planes, self.conv_layer, groups=self.groups,
                                 base_width=self.base_width, dilation=self.dilation,
-                                norm_layer=norm_layer))
+                                bn_layer=norm_layer))
 
         return nn.Sequential(*layers)
 
@@ -195,17 +197,35 @@ class ResNet(nn.Module):
         return self._forward_impl(x)
 
 
-# NOTE: Only supporting default (kaiming_init) initializaition.
-def ResNet18(conv_layer, linear_layer, init_type, **kwargs):
+# NOTE: Only supporting default (kaiming_init) initialization.
+def ResNet18(conv_layer, linear_layer, init_type, args, **kwargs):
     assert init_type == "kaiming_normal", "only supporting default init for ResNets"
-    return ResNet(conv_layer, linear_layer, BasicBlock, [2, 2, 2, 2], **kwargs)
+    if args.normalize:
+        return nn.Sequential(
+            get_normalize_layer(dataset=args.dataset),
+            ResNet(conv_layer, linear_layer, BasicBlock, [2, 2, 2, 2], **kwargs)
+        )
+    else:
+        return ResNet(conv_layer, linear_layer, BasicBlock, [2, 2, 2, 2], **kwargs)
 
 
-def ResNet34(conv_layer, linear_layer, init_type, **kwargs):
+def ResNet34(conv_layer, linear_layer, init_type, args, **kwargs):
     assert init_type == "kaiming_normal", "only supporting default init for ResNets"
-    return ResNet(conv_layer, linear_layer, BasicBlock, [3, 4, 6, 3], **kwargs)
+    if args.normalize:
+        return nn.Sequential(
+            get_normalize_layer(dataset=args.dataset),
+            ResNet(conv_layer, linear_layer, BasicBlock, [3, 4, 6, 3], **kwargs)
+        )
+    else:
+        return ResNet(conv_layer, linear_layer, BasicBlock, [3, 4, 6, 3], **kwargs)
 
 
-def ResNet50(conv_layer, linear_layer, init_type, **kwargs):
+def ResNet50(conv_layer, linear_layer, init_type, args, **kwargs):
     assert init_type == "kaiming_normal", "only supporting default init for Resnets"
-    return ResNet(conv_layer, linear_layer, Bottleneck, [3, 4, 6, 3], **kwargs)
+    if args.normalize:
+        return nn.Sequential(
+            get_normalize_layer(dataset=args.dataset),
+            ResNet(conv_layer, linear_layer, Bottleneck, [3, 4, 6, 3], **kwargs)
+        )
+    else:
+        return ResNet(conv_layer, linear_layer, Bottleneck, [3, 4, 6, 3], **kwargs)
