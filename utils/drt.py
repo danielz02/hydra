@@ -51,17 +51,17 @@ def DRT_Trainer(
     batch_time = AverageMeter("batch_time")
     data_time = AverageMeter("data_time")
     losses = AverageMeter("losses")
-    losses_lhs = AverageMeter("loss_lhs")  # if not args.ddp else DistributedMeter("loss_lhs")
+    losses_lhs = AverageMeter("loss_lhs") if not args.ddp else DistributedMeter("loss_lhs")
     losses_rhs = AverageMeter("loss_rhs")
     losses_con = AverageMeter("loss_con")
     losses_con_members = [AverageMeter(f"loss_con_{i}") for i in range(args.num_models)]
     losses_stab = AverageMeter("loss_stab")
     cosine = AverageMeter("Cosine", ":6.2f")
     l2 = AverageMeter("L2", ":6.2f")
-    top1 = AverageMeter("top1")  # if not args.ddp else DistributedMeter("Acc_1")
-    top5 = AverageMeter("top5")  # if not args.ddp else DistributedMeter("Acc_5")
+    top1 = AverageMeter("top1") if not args.ddp else DistributedMeter("Acc_1")
+    top5 = AverageMeter("top5") if not args.ddp else DistributedMeter("Acc_5")
     grad_l2_norm = AverageMeter("grad_l2")
-    valid_pairs = AverageMeter("valid_pairs")  # if not args.ddp else DistributedMeter("valid_pairs")
+    valid_pairs = AverageMeter("valid_pairs") if not args.ddp else DistributedMeter("valid_pairs")
 
     end = time.time()
 
@@ -80,7 +80,7 @@ def DRT_Trainer(
                 torch.cat([d[1] for d in batch], 0),
             )
 
-        if i == 0 and is_rank0:
+        if i == 0:
             print(
                 batch[0].shape,
                 batch[1].shape,

@@ -121,8 +121,6 @@ def smooth(model, device, val_loader, criterion, args, writer, epoch=0):
     with torch.no_grad():
         end = time.time()
         for i, data in enumerate(val_loader):
-            if i == 0:
-                print(f"Validation batch size {data[0].shape}")
             images, target = data[0].to(device), data[1].to(device)
 
             # Default: evaluate on 10 random samples of additive gaussian noise.
