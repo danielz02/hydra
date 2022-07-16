@@ -10,7 +10,7 @@ from utils.smoothadv import SmoothAdv_PGD
 from utils.utils_ensemble import requires_grad_, grad_l2, get_stats, cosine_diversity, subspace_diversity
 
 
-def train(model, device, train_loader, sm_loader, criterion, optimizer, epoch, args, writer, train_sampler):
+def train(model, device, train_loader, sm_loader, criterion, optimizer, epoch, args, writer, train_sampler, scaler):
     if args.ddp:
         import horovod.torch as hvd
         train_sampler.set_epoch(epoch)
@@ -45,6 +45,19 @@ def train(model, device, train_loader, sm_loader, criterion, optimizer, epoch, a
     dataloader = train_loader if sm_loader is None else zip(train_loader, sm_loader)
 
     for i, batch in enumerate(dataloader):
+        if i == 0 and is_rank0:
+            print(
+                batch[0].shape,
+                batch[1].shape,
+                f"Batch_size from args: {args.batch_size}",
+                "lr: {:.5f}".format(optimizer.param_groups[0]["lr"]),
+            )
+            print(
+                "Pixel range for training images : [{}, {}]".format(
+                    torch.min(batch[0]).data.cpu().numpy(),
+                    torch.max(batch[0]).data.cpu().numpy(),
+                )
+            )
         # measure data loading time
         if args.is_semisup:
             batch = (
@@ -71,13 +84,18 @@ def train(model, device, train_loader, sm_loader, criterion, optimizer, epoch, a
             inputs_c = torch.cat([inputs + noise for noise in noises], dim=0)
             targets_c = targets.repeat(args.num_noise_vec)
 
-            logits = model(inputs_c)
-            loss_xent = criterion(logits, targets_c)
+            logits_list = []
+            loss_xent, loss_con = torch.tensor(0., device=device), torch.tensor(0., device=device)
+            for j in range(args.num_models):
+                logits = model.models[j](inputs_c)
+                loss_xent += criterion(logits, targets_c)
 
-            logits_chunk = torch.chunk(logits, args.num_noise_vec, dim=0)
-            loss_con = consistency_loss(logits_chunk, args.lbd)
+                logits_chunk = torch.chunk(logits, args.num_noise_vec, dim=0)
+                loss_con += consistency_loss(logits_chunk, args.lbd)
+                logits_list.append(logits)
 
             loss = loss_xent + loss_con
+            logits = torch.mean(torch.stack(logits_list, dim=0), dim=0)
 
             if args.layer_type in ["curve", "line"] and args.beta_div and args.beta_div > 0:
                 loss += cosine_diversity(model, args)

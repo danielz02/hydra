@@ -13,7 +13,7 @@ from utils.utils_ensemble import get_stats, cosine_diversity, stability_loss, gr
 
 
 def train(
-    model, device, train_loader, sm_loader, criterion, optimizer, epoch, args, writer, train_sampler=None
+    model, device, train_loader, sm_loader, criterion, optimizer, epoch, args, writer, train_sampler=None, scaler=None
 ):
     if args.ddp:
         import horovod.torch as hvd
@@ -75,12 +75,16 @@ def train(
             )
 
         # stability-loss
-        output = model(images)
-        loss_natural = nn.CrossEntropyLoss()(output, target)
-        loss_robust = stability_loss(
-            model(images + torch.randn_like(images).to(device) * args.noise_std),
-            output
-        )
+        output_list = []
+        images_noisy = images + torch.randn_like(images).to(device) * args.noise_std
+        loss_natural, loss_robust = torch.tensor(0., device=device), torch.tensor(0., device=device)
+        for j in range(args.num_models):
+            output = model.models[j](images)
+            output_noisy = model.models[j](images_noisy)
+            output_list.append(output_noisy)
+
+            loss_natural += nn.CrossEntropyLoss()(output, target)
+            loss_robust += stability_loss(output_noisy, output)
         loss = loss_natural + args.beta * loss_robust
 
         # Diversity regularization for self-ensemble
@@ -88,6 +92,7 @@ def train(
             loss += cosine_diversity(model, args)
 
         # measure accuracy and record loss
+        output = torch.mean(torch.stack(output_list, dim=0), dim=0)
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
         losses.update(loss.item(), images.size(0))
         top1.update(acc1[0], images.size(0))
