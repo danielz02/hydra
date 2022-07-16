@@ -44,12 +44,14 @@ class imagenet:
         testset = ImageFolderLMDB(
             os.path.join(self.args.data_dir, "val.lmdb"), self.tr_test
         )
+
         # trainset = ImageFolder(
         #     os.path.join(self.args.data_dir, "train"), self.tr_train
         # )
         # testset = ImageFolder(
         #     os.path.join(self.args.data_dir, "val"), self.tr_test
         # )
+        print(trainset, testset)
 
         if self.args.ddp:
             import horovod.torch as hvd
@@ -63,18 +65,18 @@ class imagenet:
                 kwargs['multiprocessing_context'] = 'forkserver'
 
             train_sampler = torch.utils.data.distributed.DistributedSampler(
-                trainset, num_replicas=hvd.size(), rank=hvd.rank()
+                trainset, num_replicas=hvd.size(), rank=hvd.rank(), shuffle=True
             )
             test_sampler = torch.utils.data.distributed.DistributedSampler(
                 testset, num_replicas=hvd.size(), rank=hvd.rank(), shuffle=False
             )
             train_loader = torch.utils.data.DataLoader(
-                trainset, batch_size=self.args.batch_size, sampler=train_sampler, persistent_workers=True, timeout=60,
+                trainset, batch_size=self.args.batch_size, sampler=train_sampler, persistent_workers=True, timeout=600,
                 **kwargs
             )
             test_loader = torch.utils.data.DataLoader(
                 testset, batch_size=self.args.test_batch_size, sampler=test_sampler, persistent_workers=True,
-                timeout=60, **kwargs
+                timeout=600, **kwargs
             )
             self.train_sampler = train_sampler
         else:
@@ -116,9 +118,10 @@ class ImageFolderLMDB(data.Dataset):
             readonly=True, lock=False,
             readahead=False, meminit=False
         )
-        with env.begin(write=False) as txn:
+        with env.begin(write=False, buffers=True) as txn:
             self.length = pickle.loads(txn.get(b'__len__'))
             self.keys = pickle.loads(txn.get(b'__keys__'))
+        env.close()
 
     def _init_db(self):
         self.env = lmdb.open(
