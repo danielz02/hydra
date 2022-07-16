@@ -21,7 +21,7 @@ import torch.distributed as dist
 
 import data
 from args import parse_args
-from utils.schedules import get_lr_policy, get_optimizer
+from utils.schedules import get_lr_policy, get_optimizer, new_lr
 from utils.logging import (
     save_checkpoint,
     create_subdirs,
@@ -230,6 +230,9 @@ def main(args):
         hvd.barrier()
         hvd.broadcast_parameters(ensemble_model.state_dict(), root_rank=0)
         hvd.broadcast_optimizer_state(optimizer, root_rank=0)
+        if args.start_epoch is None:
+            args.start_epoch = 0
+        args.start_epoch = hvd.broadcast(torch.tensor(args.start_epoch), root_rank=0, name='start_epoch').item()
         if is_rank0:
             logger.info("Broadcast model parameters to other ranks")
 
