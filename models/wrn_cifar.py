@@ -52,7 +52,7 @@ class BasicBlock(nn.Module):
 
 class NetworkBlock(nn.Module):
     def __init__(
-        self, nb_layers, in_planes, out_planes, block, conv_layer, stride, dropRate=0.0, bn_layer=nn.BatchNorm2d
+            self, nb_layers, in_planes, out_planes, block, conv_layer, stride, dropRate=0.0, bn_layer=nn.BatchNorm2d
     ):
         super(NetworkBlock, self).__init__()
         self.layer = self._make_layer(
@@ -60,7 +60,7 @@ class NetworkBlock(nn.Module):
         )
 
     def _make_layer(
-        self, conv_layer, block, in_planes, out_planes, nb_layers, stride, dropRate, bn_layer
+            self, conv_layer, block, in_planes, out_planes, nb_layers, stride, dropRate, bn_layer
     ):
         layers = []
         for i in range(int(nb_layers)):
@@ -82,14 +82,14 @@ class NetworkBlock(nn.Module):
 
 class WideResNet(nn.Module):
     def __init__(
-        self,
-        conv_layer,
-        linear_layer,
-        bn_layer=nn.BatchNorm2d,
-        depth=34,
-        num_classes=10,
-        widen_factor=10,
-        drop_rate=0.0,
+            self,
+            conv_layer,
+            linear_layer,
+            bn_layer=nn.BatchNorm2d,
+            depth=34,
+            num_classes=10,
+            widen_factor=10,
+            drop_rate=0.0,
     ):
         super(WideResNet, self).__init__()
         nChannels = [16, 16 * widen_factor, 32 * widen_factor, 64 * widen_factor]
@@ -141,7 +141,7 @@ class WideResNet(nn.Module):
         out = self.relu(self.bn1(out))
         out = F.avg_pool2d(out, 8)
         if not isinstance(self.conv1, CurvesConv):
-            out = out.view(-1, self.nChannels)
+            out = out.view(-1, self.fc.in_features)
 
         return self.fc(out).reshape(-1, self.num_classes)
 
@@ -150,6 +150,42 @@ class WideResNet(nn.Module):
 def wrn_28_10(conv_layer, linear_layer, init_type, args, **kwargs):
     assert init_type == "kaiming_normal", "only supporting default init for WRN"
     return WideResNet(conv_layer, linear_layer, depth=28, widen_factor=10, **kwargs)
+
+
+# 0.1059 * (wrn_28_4 * 3) -> (34, 2)
+def wrn_34_2(conv_layer, linear_layer, init_type, args, **kwargs):
+    assert init_type == "kaiming_normal", "only supporting default init for WRN"
+    if args.normalize:
+        return nn.Sequential(
+            get_normalize_layer(dataset=args.dataset),
+            WideResNet(conv_layer, linear_layer, depth=34, widen_factor=2, **kwargs)
+        )
+    else:
+        return WideResNet(conv_layer, linear_layer, depth=34, widen_factor=2, **kwargs)
+
+
+# 0.0616 * (wrn_28_4 * 3) -> (22, 2)
+def wrn_10_4(conv_layer, linear_layer, init_type, args, **kwargs):
+    assert init_type == "kaiming_normal", "only supporting default init for WRN"
+    if args.normalize:
+        return nn.Sequential(
+            get_normalize_layer(dataset=args.dataset),
+            WideResNet(conv_layer, linear_layer, depth=10, widen_factor=4, **kwargs)
+        )
+    else:
+        return WideResNet(conv_layer, linear_layer, depth=10, widen_factor=4, **kwargs)
+
+
+# 0.01 * (wrn_28_4 * 3)
+def wrn_16_1(conv_layer, linear_layer, init_type, args, **kwargs):
+    assert init_type == "kaiming_normal", "only supporting default init for WRN"
+    if args.normalize:
+        return nn.Sequential(
+            get_normalize_layer(dataset=args.dataset),
+            WideResNet(conv_layer, linear_layer, depth=16, widen_factor=1, **kwargs)
+        )
+    else:
+        return WideResNet(conv_layer, linear_layer, depth=16, widen_factor=1, **kwargs)
 
 
 def wrn_28_4(conv_layer, linear_layer, init_type, args, **kwargs):
@@ -181,14 +217,7 @@ def wrn_40_2(conv_layer, linear_layer, init_type, args, **kwargs):
 if __name__ == "__main__":
     argv = Namespace()
     argv.normalize = False
-    wrn = Ensemble([
-        wrn_28_4(SubnetConv, SubnetLinear, "kaiming_normal", argv),
-        wrn_28_4(SubnetConv, SubnetLinear, "kaiming_normal", argv),
-        wrn_28_4(SubnetConv, SubnetLinear, "kaiming_normal", argv)
-    ])
-    t = torch.randn(16, 3, 32, 32)
-    wrn(t)
-    print(wrn.state_dict().keys())
-
-    wrn_subspace = Subspace(wrn_28_4(LinesConv, LinesLinear, "kaiming_normal", argv, bn_layer=LinesBN), False)
-    print(wrn_subspace.state_dict().keys())
+    for d in [10, 16, 22, 28, 34]:
+        for w in range(1, 10):
+            wrn = WideResNet(nn.Conv2d, nn.Linear, depth=d, widen_factor=w)
+            print(d, w, round(sum(p.numel() for p in wrn.parameters()) / 18354798, 4))
