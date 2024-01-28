@@ -55,9 +55,8 @@ class DRTModel(nn.Module):
         self.noise_sd = model_kwargs.get('noise_sd', 0.0)
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         # Set path
-        self.checkpoint = torch.load(weights_path, map_location=self.device)
+        self.checkpoint = torch.load(weights_path, map_location=self.device)["state_dict"]
         dir_name, _ = os.path.split(weights_path)
-        # Load GCN model from checkpoint
 
         # Extract additional values from model_kwargs if needed
         # For example: some_value = model_kwargs.get('some_key', default_value)
