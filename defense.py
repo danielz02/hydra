@@ -55,7 +55,10 @@ class DRTModel(nn.Module):
         self.noise_sd = model_kwargs.get('noise_sd', 0.0)
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         # Set path
-        self.checkpoint = torch.load(weights_path, map_location=self.device)["state_dict"]
+        self.checkpoint = {}
+        ckpt = torch.load(weights_path, map_location=self.device)["state_dict"]
+        for k, v in ckpt.items():
+            self.checkpoint[k.replace(".module", "")] = v
         dir_name, _ = os.path.split(weights_path)
 
         # Extract additional values from model_kwargs if needed
