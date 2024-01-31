@@ -21,7 +21,7 @@ MODEL_CONFIG = Namespace(
     step_size=0.0078, clip_min=0, clip_max=1, distance='l_inf', const_init=False, beta=6.0, evaluate=False,
     val_method='smooth', start_epoch=0, gpu='0', no_cuda=False, seed=1234, print_freq=100, schedule_length=0,
     mixtraink=1, num_models=5, coeff=2.0, lamda=2.0, scale=5.0, plus_adv=False, adv_eps=0.2, init_eps=0.1,
-    noise_std=0.25, lhs_weights=0.1, rhs_weights=0.5, lr_step=50, trades_loss=False, adv_training=False,
+    noise_std=0.25, noise_sd=0.25, lhs_weights=0.1, rhs_weights=0.5, lr_step=50, trades_loss=False, adv_training=False,
     drt_stab=False, separate_semisup=False, num_noise_vec=2, drt_consistency=True, lbd=20.0, attack='DDN',
     warmup=1, no_grad_attack=False, init_norm_DDN=256.0, gamma_DDN=0.05, layerwise=False, beta_div=None,
     sample_per_batch=False, subnet_to_subspace=False, subspace_type=None, ddp=False, gradient_predivide_factor=1.0,
@@ -68,7 +68,6 @@ class DRTModel(nn.Module):
         self.base_classifier = create_model(MODEL_CONFIG, [], "cuda", None)
         self.base_classifier.load_state_dict(self.checkpoint)
 
-    @torch.inference_mode()
     def forward(self, x):
         x = x.permute(0, 3, 1, 2)
         if len(x.shape) == 3:
